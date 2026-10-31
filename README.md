@@ -5,9 +5,12 @@
 - **Extend** — Tesla เป็นจอที่ 2 จริง ลากหน้าต่างไปวางได้ (แอปสร้างจอเสมือนให้เอง) หรือ **Mirror** จอที่มีอยู่
 - **แตะ / พิมพ์บนจอ Tesla** เพื่อควบคุม Mac (click, drag, scroll, คีย์บอร์ดไทย/อังกฤษ, คีย์ลัด)
 - **เสียงจาก Mac ออกลำโพงรถ** และ **จอยเกมที่ต่อกับรถ** ใช้ควบคุม Mac ได้ (แปลงเป็นคีย์บอร์ด/เมาส์)
-- **WebRTC + H.264 hardware** — ภาพลื่นกว่า Guacamole/VNC มาก
+- **WebRTC + H.264** — ภาพลื่นกว่า Guacamole/VNC มาก
 - **บน Tesla ไม่ต้องติดตั้งอะไร** แค่เปิด URL ใน browser
 - 2 เส้นทาง: **Direct Wi-Fi** (ไม่ใช้ server) หรือ **Home Server** (ผ่าน NAS ที่บ้าน ใช้ได้ทุกที่)
+- ส่งจาก **iPad / iPhone** ได้ด้วย (ดูอย่างเดียว ผ่าน Home Server)
+
+> Not affiliated with or endorsed by Tesla, Inc. — "Tesla" is a trademark of Tesla, Inc.
 
 ---
 
@@ -19,7 +22,7 @@
 5. [ใช้แบบ Direct Wi-Fi](#3-ใช้แบบ-direct-wi-fi-ไม่ใช้-server)
 6. [ใช้แบบ Home Server](#4-ใช้แบบ-home-server-nas-ที่บ้าน)
 7. [ควบคุมบน Tesla](#5-ควบคุมบน-tesla)
-8. [ส่งจาก iPad](#6-ส่งจาก-ipad-ดูอย่างเดียว)
+8. [ส่งจาก iPad / iPhone](#6-ส่งจาก-ipad--iphone-ดูอย่างเดียว)
 9. [ค่าที่แนะนำ](#7-ค่าที่แนะนำ)
 10. [ความปลอดภัย](#8-ความปลอดภัย)
 11. [แก้ปัญหา](#9-แก้ปัญหา)
@@ -59,11 +62,18 @@ Mac เป็นฝ่ายต่อออกไปหา NAS เอง จึ�
 ## 1. ติดตั้งแอปบน Mac
 
 ```bash
+git clone https://github.com/X-c0d3/tesla-display.git
+cd tesla-display
 ./scripts/build-app.sh --install
 ```
-คำสั่งเดียว: ปิดแอปเดิม → compile → คัดลอกไป `/Applications` → เปิดแอป
+`build-app.sh --install` ทำครบในคำสั่งเดียว: ปิดแอปเดิม → compile → คัดลอกไป `/Applications` → เปิดแอป
 (ครั้งแรกจะดาวน์โหลด mediamtx / Caddy พร้อมตรวจ checksum มาใส่ในแอปให้เอง)
-แก้โค้ดเมื่อไหร่ก็รันคำสั่งเดิมซ้ำได้เลย — ถ้าอยาก build อย่างเดียวไม่ติดตั้ง ใช้ `./scripts/build-app.sh`
+
+**อัปเดตเป็นเวอร์ชันล่าสุด:**
+```bash
+cd tesla-display && git pull && ./scripts/build-app.sh --install
+```
+แก้โค้ดเองก็รัน `./scripts/build-app.sh --install` ซ้ำได้เลย — ถ้าอยาก build อย่างเดียวไม่ติดตั้ง ใช้ `./scripts/build-app.sh`
 
 **ให้สิทธิ์ครั้งแรก** (System Settings > Privacy & Security):
 1. **Screen & System Audio Recording** → เปิด *Tesla Display*
@@ -136,24 +146,25 @@ Mac เป็นฝ่ายต่อออกไปหา NAS เอง จึ�
 
 ### 4.1 ติดตั้ง server (Docker บน NAS / Proxmox LXC)
 server เป็น **container เดียว** (`tesla-display`: mediamtx + Caddy + input relay ใน image เดียว)
-ไฟล์ที่ต้องใช้บน server (`scripts/package-server.sh` แพ็กให้ครบ):
-`Dockerfile` `docker/` `docker-compose.yml` `compose.behind-proxy.yml` `Caddyfile` `mediamtx.yml` `.env.example` `relay/` `web/` `nginx/`
+clone repo ลงบน server ได้เลย (ต้องมี `git` และ Docker + Docker Compose)
 
 > ที่บ้านมี nginx เป็น gateway อยู่แล้ว / ต้องการใช้ prefix path → ทำข้อ 4.1 จนถึง `nano .env` แล้วข้ามไป [4.2.1](#421-ใช้-nginx-เดิมเป็น-gateway--prefix-path-เช่น-httpshomeexamplecomtesla)
 
 ```bash
-# บน Mac: แพ็กแล้วคัดลอกขึ้น server
-./scripts/package-server.sh
-scp build/tesla-screenshare-server.tgz root@<SERVER-IP>:/opt/
-```
-```bash
-# บน server
-mkdir -p /opt/tesla-screenshare && cd /opt/tesla-screenshare
-tar -xzf ../tesla-screenshare-server.tgz && cp .env.example .env
+# บน server (NAS / Proxmox LXC)
+git clone https://github.com/X-c0d3/tesla-display.git /opt/tesla-display
+cd /opt/tesla-display
+cp .env.example .env
 sed -i.bak "s/^PUBLISH_TOKEN=.*/PUBLISH_TOKEN=$(openssl rand -hex 24)/" .env && rm .env.bak
 nano .env          # ใส่ DOMAIN และ CONTROL_PIN
 docker compose up -d --build
 docker compose logs -f         # รอบรรทัด [caddy] … "certificate obtained"
+```
+
+**อัปเดต server เป็นเวอร์ชันล่าสุด** (`.env` ไม่ถูกแตะ เพราะอยู่ใน `.gitignore`):
+```bash
+cd /opt/tesla-display && git pull && docker compose up -d --build
+# อยู่หลัง nginx: git pull && docker compose -f docker-compose.yml -f compose.behind-proxy.yml up -d --build
 ```
 
 | ค่าใน `.env` | ใส่อะไร |
@@ -194,7 +205,7 @@ CONTROL_PIN=…               # แนะนำ 10 ตัวขึ้นไป
 
 #### ขั้นที่ 2 — รัน stack แบบอยู่หลัง reverse proxy
 ```bash
-cd /opt/tesla-screenshare
+cd /opt/tesla-display
 docker compose -f docker-compose.yml -f compose.behind-proxy.yml up -d --build
 docker compose -f docker-compose.yml -f compose.behind-proxy.yml ps    # ต้องเห็น tesla-display … Up
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8088/          # ต้องได้ 200
@@ -322,13 +333,48 @@ Tesla จำ PIN ไว้ในรถ ครั้งต่อไปเปิ�
 
 ---
 
-## 6. ส่งจาก iPad (ดูอย่างเดียว)
-ใช้ได้กับ **Home Server** เท่านั้น — iPadOS ไม่ให้แอปอื่นสั่งแตะ/พิมพ์แทนผู้ใช้
-1. ติดตั้ง **Larix Screencaster** (App Store; ฟรีครั้งละ 5 นาที, Premium ไม่จำกัด)
-2. เพิ่ม connection แบบ **WebRTC (WHIP)**: `https://<DOMAIN>/screen/whip?token=<PUBLISH_TOKEN>`
-   (ถ้ามีช่อง Bearer token ให้ตัด `?token=…` แล้วใส่ token ในช่องนั้น) — H.264, 30 fps, 4–6 Mbps, keyframe 1 วินาที
-3. Control Center → กดค้าง **Screen Recording** → เลือก Larix → Start Broadcast
-4. Tesla เปิด `https://<DOMAIN>` → *View only* (ส่งได้ทีละเครื่อง เครื่องที่ส่งทีหลังจะแทนที่)
+## 6. ส่งจาก iPad / iPhone (ดูอย่างเดียว)
+iPad และ iPhone ส่งภาพหน้าจอไปแสดงบน Tesla ได้ **โดยไม่ต้องใช้ Mac** — ส่งตรงเข้า Home Server (NAS)
+```
+iPad / iPhone (Larix Screencaster) ──WHIP──► NAS (Tesla Display server) ──WHEP──► Tesla browser
+```
+ไม่ต้องแก้อะไรฝั่ง server — server รับภาพแบบ WHIP ซึ่งเป็นมาตรฐาน และรับ token ทาง URL (`?token=`) ไว้แล้วสำหรับแอปมือถือ
+
+### วิธีใช้
+1. ต้องมี **Home Server** ที่ใช้งานได้แล้ว (ข้อ 4) — แนะนำทดสอบส่งจาก Mac ให้ผ่านก่อน
+2. ติดตั้ง **Larix Screencaster** จาก App Store
+3. ในแอปเพิ่ม connection:
+   | ช่อง | ค่า |
+   |---|---|
+   | Type | **WebRTC (WHIP)** |
+   | URL (subdomain) | `https://<DOMAIN>/screen/whip?token=<PUBLISH_TOKEN>` |
+   | URL (prefix path) | `https://<DOMAIN>/tesla/screen/whip?token=<PUBLISH_TOKEN>` |
+   | ถ้ามีช่อง Bearer token | ตัด `?token=…` ออกจาก URL แล้วใส่ `PUBLISH_TOKEN` ในช่องนั้นแทน |
+   | Video | **H.264**, 30 fps, 4–6 Mbps, keyframe 1 วินาที, **ปิด B-frames** (ถ้ามีตัวเลือก) |
+4. เปิด **Focus / Do Not Disturb** ก่อน — ทุกอย่างบนจอ (รวมการแจ้งเตือน) จะขึ้นบน Tesla
+5. เริ่มส่ง: **Control Center → กดค้างปุ่ม Screen Recording → เลือก Larix → Start Broadcast**
+   (iOS บังคับให้เริ่มจากตรงนี้ เริ่มจากในแอปไม่ได้)
+6. Tesla เปิด `https://<DOMAIN>` (หรือ `…/tesla/`) → กด **View only** (หรือใส่ PIN ก็ได้ แต่การแตะไม่มีผลกับ iPad)
+7. หยุด: แตะแถบสีแดงด้านบนจอ iPad/iPhone → Stop
+
+### ข้อจำกัด
+| ข้อจำกัด | เหตุผล |
+|---|---|
+| **ดูได้อย่างเดียว** — แตะ/พิมพ์/จอยจากรถไม่มีผลกับ iPad | iPadOS/iOS ไม่อนุญาตให้แอปใดสั่งแตะ/พิมพ์แทนผู้ใช้ |
+| **Mirror เท่านั้น** — เป็นจอที่ 2 (Extend) ไม่ได้ | iPadOS ไม่มี API ให้สร้างจอเสมือน |
+| **ต้องใช้ Home Server** — ใช้ Direct Wi-Fi ไม่ได้ | ฟีเจอร์ Direct Wi-Fi อยู่ในแอป Tesla Display ซึ่งมีแค่บน macOS |
+| **Larix Screencaster ฟรีส่งได้ครั้งละ 5 นาที** | ต้องซื้อ Premium (in-app) ถ้าจะใช้ไม่จำกัด — ยังไม่เจอแอปฟรีที่ส่ง WHIP ได้ไม่จำกัด |
+| **เสียง** — ส่งได้แค่ไมโครโฟน หรือเสียงจากแอปที่รองรับ ReplayKit | ข้อจำกัดของ ReplayKit (ระบบ screen broadcast ของ iOS) |
+| **ส่งได้ทีละเครื่อง** — iPad เริ่มส่งระหว่างที่ Mac ส่งอยู่ ภาพ iPad จะแทนที่ภาพ Mac | server มีช่องภาพเดียว (`screen`) |
+| **Latency ~100–250 ms** และอาจกระตุกถ้าสัญญาณมือถือไม่ดี | ภาพวิ่งผ่าน NAS ที่บ้านไป-กลับ (เหมือน Mac แบบ Home Server) |
+| **ขอบดำ** — iPad (4:3) / iPhone แนวตั้ง จะมีขอบดำบนจอ Tesla (16:10) | สัดส่วนจอต่างกัน; หมุน iPhone เป็นแนวนอนจะเต็มจอกว่า (เฉพาะแอปที่รองรับ) |
+| **ภาพต้องไม่มี B-frames** — ถ้าแอปส่ง B-frames คนดูจะโดนตัด/ต่อใหม่วน | WebRTC เล่น B-frames ไม่ได้ (log: `WebRTC doesn't support H264 streams with B-frames`) |
+| ใช้แอปที่ส่งแบบ RTMP (แอปฟรีส่วนใหญ่) ไม่ได้ | server รับเฉพาะ WHIP |
+| ยังไม่ได้ทดสอบกับ Larix จริง | ถ้าไม่ผ่าน ดู `docker compose logs` บน server |
+
+> เหมาะกับ: เปิดแผนที่ / รูป / วิดีโอ / นำเสนอจาก iPad-iPhone บนจอใหญ่ในรถ
+> ไม่เหมาะกับ: นั่งทำงาน / เขียนโค้ด — ใช้ MacBook + Tesla Display แทน
+> Netflix / YouTube ใช้ **Tesla Theater** ในรถดีกว่า (ภาพคมกว่า เสียงออกลำโพงรถ ไม่ติด DRM)
 
 ---
 
@@ -390,7 +436,6 @@ scripts/
   build-app.sh          build "Tesla Display.app" (+ ดาวน์โหลด mediamtx / Caddy)
   mac-capture.swift     จับภาพจอด้วย ScreenCaptureKit → raw NV12 ออก stdout
   mac-input-agent.swift รับแตะ/พิมพ์ (ต่อ relay หรือเปิด WebSocket ในเครื่องสำหรับ Direct Wi-Fi)
-  package-server.sh     แพ็กไฟล์ server → build/tesla-screenshare-server.tgz
 web/index.html          หน้า viewer บน Tesla (ใช้ทั้งสองโหมด)
 relay/relay.py          input relay (Python) สำหรับ Home Server
 Dockerfile  docker/entrypoint.sh       image เดียวของ server (mediamtx + Caddy + relay)

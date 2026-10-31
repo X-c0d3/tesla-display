@@ -25,7 +25,6 @@ scripts/build-app.sh       builds build/Tesla Display.app; downloads + checksum-
 scripts/mac-capture.swift  ScreenCaptureKit capture → raw NV12 on stdout (+ optional f32le stereo audio to a FIFO)
 scripts/mac-input-agent.swift  injects input via CGEvent. Modes: relay client (Home Server) or local
                            WebSocket server on 127.0.0.1 (Direct Wi-Fi, env LOCAL_LISTEN/LOCAL_PIN)
-scripts/package-server.sh  packs the server files → build/tesla-screenshare-server.tgz
 dev/mac-publish.sh         CLI equivalent of the app's publish pipeline (mac-capture | ffmpeg → WHIP)
 dev/tesla-local-test.sh    serves a diagnostics page (http/https, WebRTC, WebGL, HW decode, screen size)
 web/index.html             the viewer the Tesla loads (both routes). WHEP + WebSocket input + audio + gamepad
@@ -52,6 +51,11 @@ mac-capture (SCK, NV12 @ fixed fps on stdout; audio → FIFO)
 input: viewer → WebSocket → (relay on NAS | agent's local WS server) → mac-input-agent → CGEvent
 ```
 Display index = position in `CGGetActiveDisplayList` (same in mac-capture and mac-input-agent).
+
+## Install / deploy
+Repo: https://github.com/X-c0d3/tesla-display — both the Mac app and the server are installed with `git clone`
+and updated with `git pull` (+ `./scripts/build-app.sh --install` on the Mac, `docker compose … up -d --build` on the
+server). There is no tarball/scp step.
 
 ## Build / run / test
 ```bash
@@ -113,7 +117,7 @@ Don't post real input events while testing (pad/click messages move the user's r
 - Pin image/binary versions (mediamtx v1.11.3, caddy 2.8.4, python:3.12-alpine + websockets 13.1).
   Verify checksums for downloads.
 - `web/`, `relay/`, `Caddyfile`, `mediamtx.yml` are BAKED INTO the image → any change needs
-  `docker compose … up -d --build` (no live-mounted files any more), and `scripts/package-server.sh`.
+  `docker compose … up -d --build` (no live-mounted files any more). Server update = `git pull` + rebuild.
 - BusyBox userland in the image (python:3.12-alpine): no `sed -u`, no `wait -n` — keep entrypoint POSIX sh.
 - After changing anything the app bundles (`app/`, `scripts/mac-*.swift`, `web/`), rebuild with
   `scripts/build-app.sh` and tell the user to recopy to `/Applications` and re-grant permissions.

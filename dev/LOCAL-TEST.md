@@ -14,7 +14,7 @@ colima list
 
 ## 2. สร้าง `.env` สำหรับทดสอบ
 ```bash
-cd ~/Desktop/DEV/tesla-screenshare
+cd tesla-display   # โฟลเดอร์ที่ clone มา
 cat > .env <<EOF
 DOMAIN=localhost
 PUBLISH_TOKEN=$(openssl rand -hex 24)
