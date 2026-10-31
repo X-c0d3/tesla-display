@@ -83,6 +83,9 @@ Don't post real input events while testing (pad/click messages move the user's r
   viewer ("WebRTC doesn't support H264 streams with B-frames") → viewer drop/reconnect loops. x264 zerolatency =
   POC type 2 / reorder 0. `-bufsize` = bitrate/2 caps keyframe bursts (Colima/cellular drop UDP bursts).
   Cost: veryfast 1920x1200@30 ≈ 17x realtime, superfast @60 ≈ 13x on Apple Silicon.
+- **Viewer must not leak RTCPeerConnections:** Chrome caps PCs per page (closed ones count until GC). The viewer
+  retries WHEP when no publisher is live, so `closePc()` nulls handlers + `pc` and retries back off 2s → 15s.
+  Never create a PC per retry without closing/backing off ("Cannot create so many PeerConnections").
 - **ffmpeg's WHIP muxer only supports UDP ICE** and aborts if the first candidate is TCP → mediamtx has
   `webrtcLocalTCPAddress: ""`. Don't re-enable ICE-TCP.
 - **No STUN** in mediamtx (`webrtcICEServers2: []`); it delayed answers ~5 s. Public address comes from

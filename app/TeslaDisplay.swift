@@ -71,6 +71,7 @@ final class Controller: ObservableObject {
     @Published var log: [String] = []
     @Published var startedAt: Date? // เวลาที่กด Start (ไว้แสดงเวลาที่รันไปแล้ว)
     @Published var teslaScreen: String? // ขนาดจอที่ Tesla รายงานมา เช่น "1920x1200 @1x"
+    @Published var sendStats: String?   // ที่ ffmpeg กำลังส่งจริง เช่น "60 fps · 7.8 Mbps" (จาก -progress ทุก 1 วินาที)
     private var autoSize = false
     private var virtualSizeNow = (w: 0, h: 0)
 
@@ -227,6 +228,7 @@ final class Controller: ObservableObject {
         running = false
         startedAt = nil
         teslaScreen = nil
+        sendStats = nil
         settings = nil
         for p in [capture, ffmpeg, agent, localServer, localWeb] where p?.isRunning == true { p?.terminate() }
         localServer = nil
@@ -260,6 +262,7 @@ final class Controller: ObservableObject {
         ff.executableURL = URL(fileURLWithPath: ffmpegPath)
         ff.arguments = [
             "-hide_banner", "-loglevel", "warning",
+            "-nostats", "-progress", "pipe:1", "-stats_period", "1",
             "-f", "rawvideo", "-pix_fmt", "nv12", "-color_range", "tv", "-video_size", "\(w)x\(h)", "-framerate", "\(s.fps)",
             "-thread_queue_size", "64", "-i", "-",
         ] + audioArgs + audioMap + [
@@ -277,6 +280,7 @@ final class Controller: ObservableObject {
         ff.standardInput = pipe
         cap.standardError = logPipe("capture")
         ff.standardError = logPipe("ffmpeg")
+        ff.standardOutput = progressPipe()
 
         ff.terminationHandler = { [weak self] p in
             Task { @MainActor in self?.publishExited(code: p.terminationStatus) }
@@ -298,6 +302,42 @@ final class Controller: ObservableObject {
     }
 
     // ffmpeg ออกเอง (เน็ตหลุด / server restart) -> ลองใหม่ทุก 3 วินาทีจนกว่าจะกด Stop
+    // ffmpeg -progress: บรรทัด key=value ทุก 1 วินาที จบชุดด้วย progress=continue
+    // fps/bitrate ของ ffmpeg เป็นค่าเฉลี่ยตั้งแต่เริ่ม -> คำนวณ realtime จาก frame / total_size ที่เพิ่มขึ้นแต่ละชุดแทน
+    private func progressPipe() -> Pipe {
+        let pipe = Pipe()
+        // readabilityHandler ของ handle เดียวถูกเรียกทีละครั้ง จึงเก็บค่าชุดก่อนหน้าไว้ใน box ได้
+        final class Current: @unchecked Sendable {
+            var frame = 0, size = 0
+            var prevFrame = -1, prevSize = 0, prevTime = Date()
+        }
+        let cur = Current()
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let text = String(decoding: h.availableData, as: UTF8.self)
+            for line in text.split(whereSeparator: \.isNewline) {
+                let kv = line.split(separator: "=", maxSplits: 1).map(String.init)
+                guard kv.count == 2 else { continue }
+                switch kv[0] {
+                case "frame": cur.frame = Int(kv[1]) ?? cur.frame
+                case "total_size": cur.size = Int(kv[1]) ?? cur.size
+                case "progress":
+                    let now = Date()
+                    defer { cur.prevFrame = cur.frame; cur.prevSize = cur.size; cur.prevTime = now }
+                    let dt = now.timeIntervalSince(cur.prevTime)
+                    guard cur.prevFrame >= 0, dt > 0.2 else { continue }
+                    let fps = Double(cur.frame - cur.prevFrame) / dt
+                    let mbps = Double(cur.size - cur.prevSize) * 8 / dt / 1_000_000
+                    // บาง muxer (เช่น whip) อาจไม่รายงาน total_size -> แสดงแค่ fps
+                    let text = cur.size > 0 ? String(format: "%.0f fps · %.1f Mbps", fps, max(0, mbps))
+                                            : String(format: "%.0f fps", fps)
+                    Task { @MainActor in if self?.running == true { self?.sendStats = text } }
+                default: break
+                }
+            }
+        }
+        return pipe
+    }
+
     private func publishExited(code: Int32) {
         guard running, let s = settings else { return }
         if capture?.isRunning == true { capture?.terminate() }
@@ -616,6 +656,7 @@ struct ContentView: View {
     @AppStorage("bitrate") private var bitrate = 8
     @AppStorage("control") private var control = true
     @AppStorage("audio") private var audio = true
+    @AppStorage("showStats") private var showStats = false  // แสดง fps / bitrate ที่กำลังส่ง (ปิดเป็นค่าเริ่มต้น)
     @AppStorage("extend") private var extend = true
     @AppStorage("resolution") private var virtualSize = "auto"
     @AppStorage("local") private var local = false
@@ -777,6 +818,14 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 PulseDot(color: statusColor, active: c.running)
                 Text(c.status).font(.callout.weight(.medium)).foregroundStyle(.white.opacity(0.8)).lineLimit(2)
+                if showStats, c.running, let stats = c.sendStats {
+                    Spacer(minLength: 8)
+                    Text(stats)
+                        .font(.system(.callout, design: .monospaced).weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(statusColor)
+                        .help("FPS / bitrate ที่ Mac กำลังส่ง (อัปเดตทุก 1 วินาที)")
+                }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
@@ -795,6 +844,9 @@ struct ContentView: View {
                         .keyboardShortcut(.defaultAction)
                 }
                 Spacer()
+                Toggle(isOn: $showStats) { Image(systemName: "chart.bar.xaxis") }
+                    .toggleStyle(.button)
+                    .help(showStats ? "Hide live FPS / bitrate" : "Show live FPS / bitrate")
                 Toggle(isOn: $showLog.animation(.spring(response: 0.35, dampingFraction: 0.85))) {
                     Label("Log", systemImage: showLog ? "sidebar.right" : "text.alignleft")
                 }.toggleStyle(.button)

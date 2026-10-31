@@ -13,6 +13,9 @@
   #bar:hover, #bar:focus-within { opacity: 1; }
   #bar button { min-width: 52px; height: 44px; border: 0; border-radius: 10px; background: #333; color: #eee; font: 18px system-ui, sans-serif; }
   #bar button.on { background: #2a6fdb; }
+  #stats { position: fixed; top: 12px; right: 12px; display: none; padding: 10px 14px; border-radius: 10px;
+           background: rgba(0,0,0,.65); color: #ddd; font: 13px/1.5 ui-monospace, Menlo, monospace; white-space: pre; pointer-events: none; }
+  #stats.show { display: block; }
   #kb { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; }
   #pin { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.8); }
   #pin.show { display: flex; }
@@ -23,6 +26,7 @@
 <body>
 <video id="v" autoplay muted playsinline></video>
 <div id="status">connecting…</div>
+<div id="stats"></div>
 <textarea id="kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
 <div id="bar">
   <button data-mod="cmd">⌘</button>
@@ -33,6 +37,7 @@
   <button data-key="Tab">⇥</button>
   <button id="kbBtn">⌨</button>
   <button id="sndBtn">🔇</button>
+  <button id="statsBtn">📊</button>
   <button id="fsBtn">⛶</button>
 </div>
 <div id="pin"><form>
@@ -45,7 +50,7 @@
 const video = document.getElementById('v');
 const statusEl = document.getElementById('status');
 const WHEP_URL = new URL('screen/whep', location.href).toString();
-let pc = null, retryTimer = null;
+let pc = null, retryTimer = null, retryDelay = 2000;
 
 function setStatus(t, hide) {
   statusEl.textContent = t;
@@ -74,7 +79,7 @@ function connect() {
 
 async function negotiate() {
   clearTimeout(retryTimer);
-  if (pc) pc.close();
+  closePc();
   pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   pc.addTransceiver('video', { direction: 'recvonly' });
   pc.addTransceiver('audio', { direction: 'recvonly' });
@@ -86,7 +91,7 @@ async function negotiate() {
     try { e.receiver.playoutDelayHint = 0; } catch {}
   };
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'connected') setStatus('live (' + agentMode + ')', true);
+    if (pc.connectionState === 'connected') { retryDelay = 2000; setStatus('live (' + agentMode + ')', true); }
     if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) retry('lost connection');
   };
 
@@ -106,10 +111,24 @@ async function negotiate() {
   }
 }
 
+// ปิด PeerConnection เก่าให้หมดจริง — browser จำกัดจำนวน PeerConnection ต่อหน้า
+// (ตัวที่ close แล้วยังนับจนกว่าจะถูก GC) ถ้าเปิดหน้าค้างไว้นานตอน Mac ไม่ได้ส่งภาพจะชนเพดาน
+function closePc() {
+  if (!pc) return;
+  pc.ontrack = null;
+  pc.onconnectionstatechange = null;
+  try { pc.close(); } catch {}
+  pc = null;
+  video.srcObject = null;
+}
+
+// ลองใหม่แบบค่อยๆ ห่างขึ้น (2 → 15 วินาที) กลับเป็น 2 วินาทีเมื่อต่อติด
 function retry(reason) {
-  setStatus(reason + ' — retrying…');
+  closePc();
+  setStatus(reason + ' — retrying in ' + Math.round(retryDelay / 1000) + 's…');
   clearTimeout(retryTimer);
-  retryTimer = setTimeout(connect, 2000);
+  retryTimer = setTimeout(connect, retryDelay);
+  retryDelay = Math.min(Math.round(retryDelay * 1.5), 15000);
 }
 
 // ---------- input (WebSocket -> relay -> Mac agent) ----------
@@ -293,6 +312,50 @@ document.getElementById('fsBtn').addEventListener('click', () => {
   else document.exitFullscreen?.();
   video.play().catch(() => {});
 });
+
+// ---------- realtime stats (📊) ----------
+// FPS / ความละเอียด / bitrate / packet loss / jitter buffer / RTT ที่รถได้รับจริง อัปเดตทุกวินาที
+const statsEl = document.getElementById('stats');
+const statsBtn = document.getElementById('statsBtn');
+let statsOn = false, statsPrev = null;
+try { statsOn = localStorage.getItem('stats') === '1'; } catch {}
+
+function setStats(on) {
+  statsOn = on;
+  statsEl.classList.toggle('show', on);
+  statsBtn.classList.toggle('on', on);
+  try { localStorage.setItem('stats', on ? '1' : '0'); } catch {}
+}
+statsBtn.addEventListener('pointerdown', (e) => e.preventDefault());
+statsBtn.addEventListener('click', () => setStats(!statsOn));
+setStats(statsOn);
+
+setInterval(async () => {
+  if (!statsOn || !pc) return;
+  let v = null, a = null, rtt = null;
+  (await pc.getStats()).forEach((x) => {
+    if (x.type === 'inbound-rtp' && x.kind === 'video') v = x;
+    if (x.type === 'inbound-rtp' && x.kind === 'audio') a = x;
+    if (x.type === 'candidate-pair' && x.nominated && x.state === 'succeeded') rtt = x.currentRoundTripTime;
+  });
+  if (!v) { statsEl.textContent = 'no video yet'; return; }
+  const now = v.timestamp, p = statsPrev;
+  const dt = p ? (now - p.t) / 1000 : 0;
+  const kbps = dt > 0 ? ((v.bytesReceived - p.bytes) * 8) / dt / 1000 : 0;
+  const fps = v.framesPerSecond ?? (dt > 0 ? (v.framesDecoded - p.frames) / dt : 0);
+  const lost = p ? v.packetsLost - p.lost : 0;
+  const jb = v.jitterBufferEmittedCount ? Math.round((1000 * v.jitterBufferDelay) / v.jitterBufferEmittedCount) : null;
+  statsPrev = { t: now, bytes: v.bytesReceived, frames: v.framesDecoded, lost: v.packetsLost };
+  statsEl.textContent = [
+    'FPS       ' + Math.round(fps || 0),
+    'size      ' + (v.frameWidth ? v.frameWidth + 'x' + v.frameHeight : '-'),
+    'bitrate   ' + (kbps / 1000).toFixed(1) + ' Mbps',
+    'lost/s    ' + Math.max(0, lost) + '   dropped ' + (v.framesDropped ?? 0),
+    'jitterbuf ' + (jb ?? '-') + ' ms',
+    'RTT       ' + (rtt != null ? Math.round(rtt * 1000) + ' ms' : '-'),
+    'route     ' + agentMode + (a ? '   audio ✓' : ''),
+  ].join('\n');
+}, 1000);
 
 // ---------- audio ----------
 // browser เล่นเสียงได้หลังผู้ใช้แตะจอครั้งแรกเท่านั้น -> แตะครั้งแรกเปิดเสียงให้อัตโนมัติ

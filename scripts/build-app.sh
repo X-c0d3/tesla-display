@@ -4,6 +4,12 @@
 #   ./scripts/build-app.sh --install  # build + ปิดแอปเดิม + คัดลอกไป /Applications + เปิดแอป
 set -euo pipefail
 
+if [[ "$(uname)" != "Darwin" ]]; then
+  echo "build-app.sh builds the macOS app — run it on a Mac (needs Xcode Command Line Tools)." >&2
+  echo "On the server use: docker compose up -d --build  (behind nginx: add -f docker-compose.yml -f compose.behind-proxy.yml)" >&2
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/Tesla Display.app"
 INSTALL=0
