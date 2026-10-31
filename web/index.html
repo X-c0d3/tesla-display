@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tesla Display</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  video { width: 100vw; height: 100vh; object-fit: contain; background: #000; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #status { position: fixed; top: 12px; left: 12px; color: #aaa; font: 14px system-ui, sans-serif; transition: opacity .5s; pointer-events: none; }
+  #status.hide { opacity: 0; }
+  #bar { position: fixed; right: 12px; bottom: 12px; display: flex; gap: 6px; opacity: .55; }
+  #bar:hover, #bar:focus-within { opacity: 1; }
+  #bar button { min-width: 52px; height: 44px; border: 0; border-radius: 10px; background: #333; color: #eee; font: 18px system-ui, sans-serif; }
+  #bar button.on { background: #2a6fdb; }
+  #kb { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; }
+  #pin { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.8); }
+  #pin.show { display: flex; }
+  #pin form { display: flex; flex-direction: column; gap: 10px; color: #ddd; font: 18px system-ui, sans-serif; }
+  #pin input, #pin button { font: 22px system-ui, sans-serif; padding: 10px 14px; border-radius: 10px; border: 0; }
+</style>
+</head>
+<body>
+<video id="v" autoplay muted playsinline></video>
+<div id="status">connecting…</div>
+<textarea id="kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+<div id="bar">
+  <button data-mod="cmd">⌘</button>
+  <button data-mod="alt">⌥</button>
+  <button data-mod="ctrl">⌃</button>
+  <button data-mod="shift">⇧</button>
+  <button data-key="Escape">esc</button>
+  <button data-key="Tab">⇥</button>
+  <button id="kbBtn">⌨</button>
+  <button id="sndBtn">🔇</button>
+  <button id="fsBtn">⛶</button>
+</div>
+<div id="pin"><form>
+  <label for="pinInput">Control PIN <span id="pinMsg"></span></label>
+  <input id="pinInput" type="password" autocomplete="off">
+  <button type="submit">Connect</button>
+  <button type="button" id="viewOnly">View only</button>
+</form></div>
+<script>
+const video = document.getElementById('v');
+const statusEl = document.getElementById('status');
+const WHEP_URL = new URL('screen/whep', location.href).toString();
+let pc = null, retryTimer = null;
+
+function setStatus(t, hide) {
+  statusEl.textContent = t;
+  statusEl.classList.toggle('hide', !!hide);
+}
+
+// ---------- video ----------
+// WHEP ไปที่ mediamtx (บน NAS = Home Server, หรือบน Mac ผ่าน Caddy = Direct Wi-Fi)
+let agentMode = 'server', videoStarted = false;
+
+function whepAnswer(sdp) {
+  const headers = { 'Content-Type': 'application/sdp' };
+  if (pin) headers.Authorization = 'Bearer ' + pin; // Direct Wi-Fi: Caddy บน Mac ตรวจ PIN ก่อนให้ดูภาพ
+  return fetch(WHEP_URL, { method: 'POST', headers, body: sdp })
+    .then(async (r) => {
+      if (r.status === 401) throw new Error('Enter the PIN to view');
+      if (!r.ok) throw new Error('WHEP ' + r.status);
+      return r.text();
+    });
+}
+
+function connect() {
+  videoStarted = true;
+  return negotiate();
+}
+
+async function negotiate() {
+  clearTimeout(retryTimer);
+  if (pc) pc.close();
+  pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.addTransceiver('audio', { direction: 'recvonly' });
+
+  pc.ontrack = (e) => {
+    video.srcObject = e.streams[0];
+    // ลด jitter buffer ให้ latency ต่ำสุด (ถ้า browser รองรับ)
+    try { e.receiver.jitterBufferTarget = 0; } catch {}
+    try { e.receiver.playoutDelayHint = 0; } catch {}
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'connected') setStatus('live (' + agentMode + ')', true);
+    if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) retry('lost connection');
+  };
+
+  try {
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise((res) => {
+      if (pc.iceGatheringState === 'complete') return res();
+      const done = () => pc.iceGatheringState === 'complete' && (pc.removeEventListener('icegatheringstatechange', done), res());
+      pc.addEventListener('icegatheringstatechange', done);
+      setTimeout(res, 2000);
+    });
+    const answer = await whepAnswer(pc.localDescription.sdp);
+    await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+    setStatus('waiting for video…');
+  } catch (err) {
+    retry(String(err.message || err));
+  }
+}
+
+function retry(reason) {
+  setStatus(reason + ' — retrying…');
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(connect, 2000);
+}
+
+// ---------- input (WebSocket -> relay -> Mac agent) ----------
+const INPUT_URL = new URL('input/viewer', location.href);
+INPUT_URL.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const pinBox = document.getElementById('pin');
+const pinInput = document.getElementById('pinInput');
+let ws = null, wsReady = false, viewOnly = false;
+
+const store = {
+  get() { try { return localStorage.getItem('controlPin'); } catch { return null; } },
+  set(v) { try { v ? localStorage.setItem('controlPin', v) : localStorage.removeItem('controlPin'); } catch {} },
+};
+let pin = store.get();
+
+function askPin(msg) {
+  document.getElementById('pinMsg').textContent = msg || '';
+  pinBox.classList.add('show');
+  pinInput.value = '';
+  pinInput.focus();
+}
+pinBox.querySelector('form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  pin = pinInput.value.trim();
+  if (!pin) return;
+  store.set(pin);
+  pinBox.classList.remove('show');
+  pinInput.blur();
+  connectInput();
+});
+document.getElementById('viewOnly').addEventListener('click', () => {
+  viewOnly = true;
+  pinBox.classList.remove('show');
+  connect();
+});
+
+function connectInput() {
+  if (!pin) return askPin();
+  if (ws) ws.close();
+  ws = new WebSocket(INPUT_URL);
+  ws.onopen = () => ws.send(JSON.stringify({ auth: pin }));
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t === 'ok' || m.t === 'agent') {
+      const first = !wsReady;
+      wsReady = true;
+      if (first) reportScreen();
+      agentMode = m.mode || 'server'; // "direct" เมื่อหน้าเว็บมาจาก Mac เอง
+      if (!m.online) setStatus('Mac offline');
+      if (!videoStarted) connect(); // เริ่มภาพครั้งเดียว (WebSocket หลุด/ต่อใหม่ไม่ต้องเริ่มภาพใหม่)
+    }
+    if (m.t === 'denied') { pin = null; store.set(null); askPin('— wrong PIN'); }
+  };
+  ws.onclose = () => {
+    wsReady = false;
+    if (pin) setTimeout(connectInput, 2000); // Tesla browser ตัด WebSocket บ่อย -> reconnect
+  };
+}
+
+// บอก Mac ว่าจอ Tesla ใหญ่แค่ไหน (CSS px + devicePixelRatio) เพื่อให้ Resolution: Auto ปรับจอเสมือนให้พอดี
+function reportScreen() {
+  const dpr = window.devicePixelRatio || 1;
+  send({ t: 'screen', w: screen.width, h: screen.height, dpr, vw: innerWidth, vh: innerHeight });
+}
+
+function send(o) {
+  if (wsReady && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o));
+}
+
+// แปลงตำแหน่งบนจอ Tesla -> 0..1 ของภาพจริง (ตัดขอบดำของ object-fit: contain)
+function norm(ev) {
+  const r = video.getBoundingClientRect();
+  const vw = video.videoWidth || 16, vh = video.videoHeight || 10;
+  const s = Math.min(r.width / vw, r.height / vh);
+  const w = vw * s, h = vh * s;
+  const ox = r.left + (r.width - w) / 2, oy = r.top + (r.height - h) / 2;
+  const c = (n) => Math.min(1, Math.max(0, n));
+  return { x: c((ev.clientX - ox) / w), y: c((ev.clientY - oy) / h) };
+}
+
+// touch: แตะ = click, แตะค้าง = right click, ลาก = drag, สองนิ้ว = scroll
+const pointers = new Map();
+let mode = null, start = null, holdTimer = null;
+
+video.addEventListener('pointerdown', (e) => {
+  if (viewOnly) return;
+  video.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1) {
+    mode = 'pending';
+    start = { ev: e, p: norm(e) };
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      if (mode !== 'pending') return;
+      send({ t: 'down', b: 2, ...start.p });
+      send({ t: 'up', b: 2, ...start.p });
+      mode = 'done';
+    }, 550);
+  } else if (pointers.size === 2 && mode === 'pending') {
+    clearTimeout(holdTimer);
+    mode = 'scroll';
+  }
+});
+
+video.addEventListener('pointermove', (e) => {
+  const prev = pointers.get(e.pointerId);
+  if (!prev) return;
+  if (mode === 'pending' && Math.hypot(e.clientX - start.ev.clientX, e.clientY - start.ev.clientY) > 10) {
+    clearTimeout(holdTimer);
+    mode = 'drag';
+    send({ t: 'down', b: 0, ...start.p });
+  }
+  if (mode === 'drag') send({ t: 'move', ...norm(e) });
+  if (mode === 'scroll') send({ t: 'scroll', dx: (e.clientX - prev.x) / 2, dy: (e.clientY - prev.y) / 2 });
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+});
+
+function pointerEnd(e) {
+  if (!pointers.delete(e.pointerId)) return;
+  if (pointers.size > 0) return;
+  clearTimeout(holdTimer);
+  if (mode === 'pending') {
+    send({ t: 'down', b: 0, ...start.p });
+    send({ t: 'up', b: 0, ...start.p });
+  } else if (mode === 'drag') {
+    send({ t: 'up', b: 0, ...norm(e) });
+  }
+  mode = null;
+}
+video.addEventListener('pointerup', pointerEnd);
+video.addEventListener('pointercancel', pointerEnd);
+video.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// keyboard: textarea ที่ซ่อนไว้เปิด on-screen keyboard ของ Tesla
+const kb = document.getElementById('kb');
+const SENTINEL = ' ';
+const mods = new Set();
+const NAMED = ['Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'];
+
+function resetKb() { kb.value = SENTINEL; kb.setSelectionRange(1, 1); }
+function takeMods() {
+  const m = [...mods];
+  mods.clear();
+  document.querySelectorAll('[data-mod]').forEach((b) => b.classList.remove('on'));
+  return m;
+}
+function sendKey(key) { send({ t: 'key', key, mods: takeMods() }); }
+
+kb.addEventListener('keydown', (e) => {
+  if (!NAMED.includes(e.key)) return;
+  e.preventDefault();
+  sendKey(e.key);
+});
+kb.addEventListener('input', () => {
+  const v = kb.value;
+  if (v.length < SENTINEL.length) sendKey('Backspace'); // backspace ที่ keydown ไม่ได้จับ
+  else {
+    for (const ch of v.slice(SENTINEL.length)) {
+      if (ch === '\n') sendKey('Enter');
+      else if (mods.size) sendKey(ch.toLowerCase());
+      else send({ t: 'text', s: ch });
+    }
+  }
+  resetKb();
+});
+
+// ปุ่มบน toolbar ไม่ให้แย่ง focus จาก textarea (keyboard จะได้ไม่หุบ)
+document.querySelectorAll('#bar button').forEach((b) => b.addEventListener('pointerdown', (e) => e.preventDefault()));
+document.querySelectorAll('[data-mod]').forEach((b) => b.addEventListener('click', () => {
+  const m = b.dataset.mod;
+  mods.has(m) ? mods.delete(m) : mods.add(m);
+  b.classList.toggle('on', mods.has(m));
+}));
+document.querySelectorAll('[data-key]').forEach((b) => b.addEventListener('click', () => sendKey(b.dataset.key)));
+document.getElementById('kbBtn').addEventListener('click', () => {
+  if (document.activeElement === kb) kb.blur();
+  else { resetKb(); kb.focus(); }
+});
+document.getElementById('fsBtn').addEventListener('click', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+  else document.exitFullscreen?.();
+  video.play().catch(() => {});
+});
+
+// ---------- audio ----------
+// browser เล่นเสียงได้หลังผู้ใช้แตะจอครั้งแรกเท่านั้น -> แตะครั้งแรกเปิดเสียงให้อัตโนมัติ
+const sndBtn = document.getElementById('sndBtn');
+function setMuted(m) {
+  video.muted = m;
+  sndBtn.textContent = m ? '🔇' : '🔊';
+  if (!m) video.play().catch(() => {});
+}
+sndBtn.addEventListener('pointerdown', (e) => e.preventDefault());
+sndBtn.addEventListener('click', () => setMuted(!video.muted));
+document.addEventListener('pointerdown', function unmuteOnce(e) {
+  if (e.target === sndBtn) return;
+  document.removeEventListener('pointerdown', unmuteOnce, true);
+  setMuted(false);
+}, true);
+
+// ---------- gamepad ----------
+// อ่านจอยที่ต่อกับรถ (USB/Bluetooth) แล้วส่งสถานะไปที่ Mac (Mac แปลงเป็นคีย์บอร์ด/เมาส์)
+const padPrev = {};
+let padLoop = false;
+function pollPads() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  let any = false;
+  for (const p of pads) {
+    if (!p) continue;
+    any = true;
+    const b = p.buttons.map((x) => (x.pressed ? 1 : 0));
+    const a = p.axes.map((v) => (Math.abs(v) < 0.15 ? 0 : Math.round(v * 100) / 100));
+    const key = b.join('') + '|' + a.join(',');
+    // ส่งเมื่อปุ่มเปลี่ยน หรือทุกเฟรมขณะโยกอนาล็อก (ใช้ขยับเมาส์)
+    if (!viewOnly && (key !== padPrev[p.index] || a.some((v) => v !== 0))) {
+      send({ t: 'pad', i: p.index, b, a });
+      padPrev[p.index] = key;
+    }
+  }
+  if (any) requestAnimationFrame(pollPads); else padLoop = false;
+}
+window.addEventListener('gamepadconnected', (e) => {
+  setStatus('🎮 ' + (e.gamepad.id || 'gamepad') + ' connected', false);
+  setTimeout(() => setStatus('', true), 2500);
+  if (!padLoop) { padLoop = true; requestAnimationFrame(pollPads); }
+});
+
+// มี PIN แล้ว: รอรู้โหมดของ Mac จาก relay ก่อนค่อยเริ่มภาพ / ยังไม่มี PIN: รอเลือก PIN หรือ View only
+connectInput();
+</script>
+</body>
+</html>

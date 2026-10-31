@@ -1,0 +1,24 @@
+# Tesla Display server — container เดียว (mediamtx + Caddy + input relay)
+#   docker compose up -d --build
+# อยู่หลัง nginx / reverse proxy เดิม: ดู compose.behind-proxy.yml
+services:
+  tesla-display:
+    build: .
+    image: tesla-display:latest
+    restart: unless-stopped
+    environment:
+      - DOMAIN=${DOMAIN:?set DOMAIN in .env}
+      - PUBLISH_TOKEN=${PUBLISH_TOKEN:?set PUBLISH_TOKEN in .env}
+      - CONTROL_PIN=${CONTROL_PIN:?set CONTROL_PIN in .env}
+    ports:
+      # port-forward จาก router มาที่เครื่องนี้: TCP 80 (ขอใบรับรอง), TCP 443 (เว็บ), UDP 8189 (ภาพ WebRTC)
+      - "80:80"
+      - "443:443"
+      - "8189:8189/udp"
+    volumes:
+      - caddy_data:/data # ใบรับรอง HTTPS (ไม่ต้องขอใหม่ทุกครั้งที่ rebuild)
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

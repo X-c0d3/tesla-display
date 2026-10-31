@@ -1,0 +1,21 @@
+# build output (scripts/build-app.sh, scripts/package-server.sh)
+build/
+*.tgz
+
+# downloaded mediamtx / Caddy binaries (scripts/build-app.sh)
+.cache/
+
+# compiled CLI tools (dev/mac-publish.sh)
+.bin/
+
+# secrets — copy .env.example to .env and fill in
+.env
+
+# per-machine tool settings
+.claude/settings.local.json
+
+# personal notes
+note.txt
+
+# macOS
+.DS_Store

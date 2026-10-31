@@ -1,0 +1,30 @@
+{$SITE_ADDRESS} {
+	# WHIP publish (Mac / iPad -> NAS): ต้องมี Authorization: Bearer <PUBLISH_TOKEN>
+	# หรือ ?token=<PUBLISH_TOKEN> สำหรับแอปที่ใส่ header เองไม่ได้ (เช่น Larix บน iPad)
+	handle /screen/whip {
+		@noauth {
+			not header Authorization "Bearer {$PUBLISH_TOKEN}"
+			not query token={$PUBLISH_TOKEN}
+		}
+		respond @noauth 401
+		rewrite * {path}
+		reverse_proxy 127.0.0.1:8889
+	}
+
+	# WHEP (Tesla viewer) และ PATCH/DELETE ของ WHIP session (/screen/whip/<session-uuid>)
+	handle /screen/* {
+		reverse_proxy 127.0.0.1:8889
+	}
+
+	# Input WebSocket (Tesla viewer + Mac agent)
+	handle /input/* {
+		reverse_proxy 127.0.0.1:8765
+	}
+
+	handle {
+		header Cache-Control no-store
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

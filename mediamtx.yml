@@ -1,0 +1,36 @@
+logLevel: info
+
+# ปิดโปรโตคอลที่ไม่ใช้
+api: no
+rtsp: no
+rtmp: no
+hls: no
+srt: no
+
+webrtc: yes
+webrtcAddress: 127.0.0.1:8889 # เรียกผ่าน Caddy เท่านั้น
+webrtcLocalUDPAddress: :8189
+# ปิด ICE-TCP: ffmpeg WHIP ใช้ได้แค่ UDP และจะล้มถ้าเจอ TCP candidate
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: no
+
+# address ที่ Tesla/Mac ใช้ส่ง UDP มาหา: docker-compose ตั้งให้เป็น DOMAIN ใน .env
+# ผ่าน MTX_WEBRTCADDITIONALHOSTS (ไม่ต้องแก้ที่นี่)
+webrtcAdditionalHosts: []
+
+# ไม่ใช้ STUN: webrtcAdditionalHosts บอก address ภายนอกแล้ว (STUN ทำให้ตอบช้า ~5 วินาที)
+webrtcICEServers2: []
+
+# 8889 เปิดเฉพาะใน docker network; caddy เป็นคนตรวจ PUBLISH_TOKEN ก่อนส่ง WHIP เข้ามา
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    permissions:
+      - action: publish
+        path: screen
+      - action: read
+        path: screen
+
+paths:
+  screen:

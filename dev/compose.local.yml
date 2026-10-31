@@ -1,0 +1,11 @@
+# ทดสอบบน Colima (HTTP, ไม่มีโดเมน/ใบรับรอง) — ดู dev/LOCAL-TEST.md
+#   docker compose -f docker-compose.yml -f dev/compose.local.yml up -d --build
+services:
+  tesla-display:
+    environment:
+      - SITE_ADDRESS=:80 # HTTP ธรรมดา ไม่ขอใบรับรอง
+      # IP ของ Colima VM (colima start --network-address) ให้ ICE candidate ชี้มาที่นี่
+      - MTX_WEBRTCADDITIONALHOSTS=${COLIMA_IP:?set COLIMA_IP in .env}
+    ports: !override
+      - "8088:80"
+      - "8189:8189/udp"

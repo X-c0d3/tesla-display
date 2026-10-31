@@ -1,0 +1,11 @@
+# ใช้เมื่อมี reverse proxy (เช่น nginx) ถือพอร์ต 80/443 และใบรับรอง HTTPS อยู่แล้ว
+#   docker compose -f docker-compose.yml -f compose.behind-proxy.yml up -d --build
+# แล้วให้ proxy ส่ง https://<DOMAIN>[/prefix/] -> http://<IP เครื่องนี้>:8088 (ดู nginx/)
+# UDP 8189 ยังต้อง port-forward จาก router มาที่เครื่องนี้ตรงๆ (ภาพ WebRTC ไม่ผ่าน proxy)
+services:
+  tesla-display:
+    environment:
+      - SITE_ADDRESS=:80 # Caddy เป็น HTTP ธรรมดา ไม่ขอใบรับรอง (proxy ทำ HTTPS ให้)
+    ports: !override
+      - "${PROXY_PORT:-8088}:80"
+      - "8189:8189/udp"
