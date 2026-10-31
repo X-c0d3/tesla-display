@@ -20,7 +20,7 @@
 3. [ติดตั้งแอปบน Mac](#1-ติดตั้งแอปบน-mac)
 4. [หน้าแอป](#2-หน้าแอป)
 5. [ใช้แบบ Direct Wi-Fi](#3-ใช้แบบ-direct-wi-fi-ไม่ใช้-server)
-6. [ใช้แบบ Home Server](#4-ใช้แบบ-home-server-nas-ที่บ้าน)
+6. [ใช้แบบ Home Server](#4-ใช้แบบ-home-server-server-ของคุณเอง-nas-ที่บ้าน--vps--oracle-cloud)
 7. [ควบคุมบน Tesla](#5-ควบคุมบน-tesla)
 8. [ส่งจาก iPad / iPhone](#6-ส่งจาก-ipad--iphone-ดูอย่างเดียว)
 9. [ค่าที่แนะนำ](#7-ค่าที่แนะนำ)
@@ -142,81 +142,67 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 
 ---
 
-## 4. ใช้แบบ Home Server (NAS ที่บ้าน)
-
-### 4.1 ติดตั้ง server (Docker บน NAS / Proxmox LXC)
+## 4. ใช้แบบ Home Server (server ของคุณเอง: NAS ที่บ้าน / VPS / Oracle Cloud)
 server เป็น **container เดียว** (`tesla-display`: mediamtx + Caddy + input relay ใน image เดียว)
-clone repo ลงบน server ได้เลย (ต้องมี `git` และ Docker + Docker Compose)
+ต้องมี `git`, Docker และ Docker Compose **v2.24 ขึ้นไป** (`docker compose version`)
 
-> ที่บ้านมี nginx เป็น gateway อยู่แล้ว / ต้องการใช้ prefix path → ทำข้อ 4.1 จนถึง `nano .env` แล้วข้ามไป [4.2.1](#421-ใช้-nginx-เดิมเป็น-gateway--prefix-path-เช่น-httpshomeexamplecomtesla)
+### 4.1 เลือกแบบติดตั้งก่อน
+| | **แบบ A — server ใช้พอร์ต 80/443 เอง** | **แบบ B — อยู่หลัง nginx ที่มีอยู่แล้ว** |
+|---|---|---|
+| ใช้เมื่อ | เครื่องนี้ยังไม่มีเว็บอื่น / ไม่มี nginx | มี nginx ถือพอร์ต 80/443 อยู่แล้ว (มีเว็บอื่นอยู่บนโดเมนเดียวกัน) |
+| HTTPS / ใบรับรอง | Caddy ของเราขอ Let's Encrypt ให้เอง | nginx เดิมจัดการ |
+| URL | `https://screen.example.com/` | `https://home.example.com/tesla/` (prefix path) หรือ subdomain |
+| คำสั่ง docker compose | `docker compose …` | `docker compose -f docker-compose.yml -f compose.behind-proxy.yml …` **ทุกครั้ง** |
+| เปิดพอร์ต | TCP 80, TCP 443, **UDP 8189** | **UDP 8189** (80/443 เป็นของ nginx อยู่แล้ว) |
 
+> ⚠️ ถ้ามี nginx อยู่แล้วแต่รันแบบ A Caddy จะพยายามขอใบรับรองและใช้พอร์ต 443 เอง → ใช้งานไม่ได้
+
+### 4.2 เตรียม server (ทั้งสองแบบ)
 ```bash
-# บน server (NAS / Proxmox LXC)
 git clone https://github.com/X-c0d3/tesla-display.git /opt/tesla-display
 cd /opt/tesla-display
 cp .env.example .env
 sed -i.bak "s/^PUBLISH_TOKEN=.*/PUBLISH_TOKEN=$(openssl rand -hex 24)/" .env && rm .env.bak
 nano .env          # ใส่ DOMAIN และ CONTROL_PIN
-docker compose up -d --build
-docker compose logs -f         # รอบรรทัด [caddy] … "certificate obtained"
 ```
-
-**อัปเดต server เป็นเวอร์ชันล่าสุด** (`.env` ไม่ถูกแตะ เพราะอยู่ใน `.gitignore`):
-```bash
-cd /opt/tesla-display && git pull && docker compose up -d --build
-# อยู่หลัง nginx: git pull && docker compose -f docker-compose.yml -f compose.behind-proxy.yml up -d --build
-```
-
 | ค่าใน `.env` | ใส่อะไร |
 |---|---|
-| `DOMAIN` | โดเมนที่ชี้มา IP บ้าน เช่น `xxx.duckdns.org` (ไม่ต้องมี `https://`) |
+| `DOMAIN` | โดเมนที่ชี้มาที่ server (A record → public IP) **ไม่ต้องมี `https://` และไม่ต้องมี `/tesla`** |
 | `PUBLISH_TOKEN` | สุ่มด้วยคำสั่ง `sed` ข้างบน — ใส่ค่าเดียวกันในช่อง Token ของแอป |
-| `CONTROL_PIN` | PIN ที่พิมพ์บน Tesla (อย่างน้อย 6 ตัว ยิ่งยาวยิ่งดี) |
+| `CONTROL_PIN` | PIN ที่พิมพ์บน Tesla (อย่างน้อย 6 ตัว แนะนำ 10 ตัวขึ้นไป) |
+| `PROXY_PORT` | (แบบ B, ไม่บังคับ) พอร์ต HTTP ที่ nginx จะส่งต่อมา ค่าเริ่มต้น 8088 |
 
 Proxmox LXC ต้องเปิด `nesting=1,keyctl=1`
 
-### 4.2 เครือข่าย
-| อะไร | ตั้งค่า |
-|---|---|
-| DNS | A record ของ `DOMAIN` → IP บ้าน (DDNS ถ้า IP เปลี่ยน; Cloudflare ให้ปิด proxy = เมฆสีเทา) |
-| Port-forward router → IP ของ server | **TCP 80** (ขอใบรับรอง), **TCP 443** (เว็บ / WHIP / WHEP / input), **UDP 8189** (ภาพ) |
-
-- Tesla browser ไม่ยอมเปิด raw IP ต้องใช้โดเมน
-- เน็ตบ้านแบบ CGNAT (port-forward ไม่ได้) ใช้โหมดนี้ไม่ได้ → ใช้ Direct Wi-Fi แทน
-- IP บ้านเปลี่ยนหลัง DDNS อัปเดต → `docker compose restart`
-
-### 4.2.1 ใช้ nginx เดิมเป็น gateway + prefix path (เช่น `https://home.example.com/tesla/`)
-ใช้เมื่อที่บ้านมี nginx ถือพอร์ต 80/443 อยู่แล้ว และโดเมนหลักมีเว็บอื่นใช้งานอยู่ — ระบบนี้จะอยู่ใต้ path `/tesla/`
-โดยไม่แตะเว็บหลัก
-
+### 4.3 แบบ A — server ใช้พอร์ต 80/443 เอง
+```bash
+cd /opt/tesla-display
+docker compose up -d --build
+docker compose logs -f         # รอบรรทัด [caddy] … "certificate obtained" แล้วกด Ctrl+C
 ```
-Tesla / Mac ──https://home.example.com/tesla/──► nginx (เดิม, ถือใบรับรอง) ──http──► <LXC>:8088 (Caddy ของเรา) ──► mediamtx / relay
-Tesla / Mac ◄════════════ UDP 8189 (ภาพ+เสียง WebRTC, ไม่ผ่าน nginx) ═══════════════► <LXC>:8189 (mediamtx)
+ใช้งาน: แอปบน Mac → Server `https://<DOMAIN>` · Tesla เปิด `https://<DOMAIN>/`
+
+### 4.4 แบบ B — อยู่หลัง nginx เดิม + prefix path (เช่น `https://home.example.com/tesla/`)
+```
+Tesla / Mac ──https://home.example.com/tesla/──► nginx (เดิม, ถือใบรับรอง) ──http──► <server>:8088 (Caddy ของเรา) ──► mediamtx / relay
+Tesla / Mac ◄════════════ UDP 8189 (ภาพ+เสียง WebRTC, ไม่ผ่าน nginx) ═══════════════► <server>:8189 (mediamtx)
 ```
 nginx ส่งต่อแค่หน้าเว็บ, signalling (WHIP/WHEP) และ WebSocket (แตะ/พิมพ์/จอย) — ภาพไม่ผ่าน nginx จึงไม่ทำให้ช้าลง
 
-#### ขั้นที่ 1 — `.env` บน server
-```bash
-DOMAIN=home.example.com     # โดเมนเดียวกับที่ nginx ใช้ — ไม่ต้องใส่ https:// และไม่ต้องใส่ /tesla
-PUBLISH_TOKEN=…             # สุ่มตามข้อ 4.1
-CONTROL_PIN=…               # แนะนำ 10 ตัวขึ้นไป
-# PROXY_PORT=8088           # (ไม่บังคับ) พอร์ต HTTP ที่ nginx จะส่งต่อมา
-```
-
-#### ขั้นที่ 2 — รัน stack แบบอยู่หลัง reverse proxy
+#### ขั้นที่ 1 — รัน container
 ```bash
 cd /opt/tesla-display
 docker compose -f docker-compose.yml -f compose.behind-proxy.yml up -d --build
-docker compose -f docker-compose.yml -f compose.behind-proxy.yml ps    # ต้องเห็น tesla-display … Up
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8088/          # ต้องได้ 200
+docker ps --filter name=tesla-display --format '{{.Status}} | {{.Ports}}'   # ต้องเห็น …:8088->80/tcp, …:8189->8189/udp
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8088/                # ต้องได้ 200
 ```
 `compose.behind-proxy.yml` ทำให้ Caddy ของเราเป็น HTTP ธรรมดาบนพอร์ต 8088 (ไม่ขอใบรับรอง ไม่แย่งพอร์ต 80/443 ของ nginx)
-ทุกครั้งที่สั่ง docker compose บน server นี้ต้องใส่ `-f docker-compose.yml -f compose.behind-proxy.yml`
 
-#### ขั้นที่ 3 — เพิ่ม location ใน nginx
+#### ขั้นที่ 2 — เพิ่ม location ใน nginx
 ตัวอย่างเต็มอยู่ที่ [nginx/tesla-display-prefix.conf](nginx/tesla-display-prefix.conf)
+(มี subdomain แยกให้ระบบนี้ เช่น `screen.example.com` → ใช้ [nginx/tesla-display.conf](nginx/tesla-display.conf) แทน)
 
-**3.1** ระดับ `http { }` (เช่นไฟล์ใน `conf.d/`) — ข้ามได้ถ้า config หลักมี `map $http_upgrade` อยู่แล้ว (ประกาศซ้ำจะ error):
+**2.1** ระดับ `http { }` (เช่นไฟล์ใน `conf.d/`) — ข้ามได้ถ้า config หลักมี `map $http_upgrade` อยู่แล้ว (ประกาศซ้ำจะ error):
 ```nginx
 map $http_upgrade $connection_upgrade {
     default upgrade;
@@ -224,14 +210,15 @@ map $http_upgrade $connection_upgrade {
 }
 ```
 
-**3.2** ใน `server { }` เดิมของ `home.example.com` (บล็อก `listen 443 ssl`) เพิ่ม:
+**2.2** ใน `server { }` เดิมของ `home.example.com` (บล็อก `listen 443 ssl`) เพิ่ม:
 ```nginx
 location = /tesla {
     return 301 /tesla/;
 }
 
 location /tesla/ {
-    proxy_pass http://192.168.1.50:8088/;       # IP ของ LXC ที่รัน docker : PROXY_PORT  ("/" ท้าย = ตัด /tesla ออก)
+    proxy_pass http://127.0.0.1:8088/;          # nginx เครื่องเดียวกัน = 127.0.0.1 / คนละเครื่อง = IP ของ server : PROXY_PORT
+                                                # ("/" ท้าย = ตัด /tesla ออกก่อนส่งต่อ)
     proxy_redirect / /tesla/;                   # เติม /tesla กลับใน header Location
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -246,56 +233,79 @@ location /tesla/ {
     client_max_body_size 1m;
 }
 ```
-- แก้ `192.168.1.50` เป็น IP ของ LXC — ถ้า nginx รันใน docker ห้ามใช้ `localhost`/`127.0.0.1` (จะหมายถึง container ของ nginx เอง)
+- nginx รันใน docker → ห้ามใช้ `127.0.0.1` (จะหมายถึง container ของ nginx เอง) ให้ใช้ IP ของเครื่อง
 - อยากใช้ชื่ออื่นแทน `/tesla` ต้องแก้ให้ตรงกันทั้ง 4 ที่: `location = /tesla`, `return 301`, `location /tesla/`, `proxy_redirect`
 
-**3.3** ตรวจและโหลด config ใหม่:
+**2.3** ตรวจและโหลด config ใหม่:
 ```bash
 nginx -t && nginx -s reload
 # nginx ใน docker: docker exec <container> nginx -t && docker exec <container> nginx -s reload
 ```
 
-#### ขั้นที่ 4 — router / firewall
-| พอร์ต | ไปที่ | หมายเหตุ |
-|---|---|---|
-| TCP 80, 443 | nginx (เหมือนเดิม) | ไม่ต้องเปลี่ยนอะไร |
-| **UDP 8189** | **IP ของ LXC** ที่รัน docker | **ต้องเพิ่ม** — พอร์ตภายนอก = ภายใน = 8189 |
-| TCP 8088 | — | **ห้ามเปิดออก internet** ให้เฉพาะ nginx เข้าถึง (เป็น HTTP ธรรมดา) |
-
-Proxmox firewall / `ufw` ใน LXC: อนุญาต UDP 8189 จากทุกที่ และ TCP 8088 จาก IP ของ nginx เท่านั้น
-
-#### ขั้นที่ 5 — ตรวจสอบ (จากเครื่องนอกบ้าน เช่นมือถือปิด Wi-Fi)
+#### ขั้นที่ 3 — ตรวจสอบ (จากเครื่องอื่น เช่นมือถือปิด Wi-Fi)
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://home.example.com/tesla/          # 200
-curl -s -o /dev/null -w "%{http_code}\n" -X POST https://home.example.com/tesla/screen/whip   # 401 (ไม่มี token = ถูกต้อง)
+curl -s -o /dev/null -w "%{http_code}\n" https://home.example.com/tesla/                       # 200
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://home.example.com/tesla/screen/whip    # 401 (ไม่มี token = ถูกต้อง)
 curl -si -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
-  -H "Sec-WebSocket-Key: dGVzdA==" https://home.example.com/tesla/input/viewer | head -1   # HTTP/1.1 101 Switching Protocols
+  -H "Sec-WebSocket-Key: dGVzdA==" https://home.example.com/tesla/input/viewer | head -1       # HTTP/1.1 101 Switching Protocols
 ```
 
-#### ขั้นที่ 6 — ใช้งาน
+#### ใช้งาน
 | | ใส่อะไร |
 |---|---|
-| แอปบน Mac → Route **Home Server** → Server | `https://home.example.com/tesla` |
+| แอปบน Mac → Route **Home Server** → Server | `https://home.example.com/tesla` (มี `/` ท้ายหรือไม่ก็ได้) |
 | Token | `PUBLISH_TOKEN` |
 | Tesla browser | `https://home.example.com/tesla/` (แนะนำ bookmark) |
 | iPad / Larix (WHIP) | `https://home.example.com/tesla/screen/whip?token=<PUBLISH_TOKEN>` |
 
-#### แก้ปัญหาแบบ nginx + prefix
+### 4.5 เปิดพอร์ต / firewall
+**UDP 8189 จำเป็นทุกแบบ** — ภาพและเสียงไม่ได้วิ่งผ่าน HTTPS แต่วิ่ง UDP ตรงไปที่ container
+พอร์ตภายนอกกับภายในต้องเป็น 8189 ทั้งคู่ · TCP 8088 (แบบ B) **ห้ามเปิดออก internet**
+
+| server อยู่ที่ไหน | ต้องเปิดตรงไหน |
+|---|---|
+| **NAS / เครื่องที่บ้าน** | 1) router: port-forward UDP 8189 (+ TCP 80/443 ถ้าแบบ A) → IP ของ server 2) Proxmox firewall / `ufw` ถ้าเปิดใช้ |
+| **Oracle Cloud** | 1) Console: Networking → VCN → Subnet → Security List (หรือ NSG ของ VNIC) → Add Ingress Rule: Source `0.0.0.0/0`, **IP Protocol UDP**, Destination Port **8189** 2) ใน VM: `sudo iptables -I INPUT 1 -p udp --dport 8189 -j ACCEPT && sudo netfilter-persistent save` |
+| **VPS อื่น (AWS / GCP / DigitalOcean ฯลฯ)** | 1) Security Group / Cloud Firewall: UDP 8189 2) `ufw allow 8189/udp` ถ้าเปิด ufw อยู่ |
+
+ใช้ `iptables -L INPUT -n --line-numbers` ดูกฎปัจจุบันก่อน — ถ้า `-I INPUT <เลข>` ขึ้น `Index of insertion too big` ให้ใช้เลข `1`
+
+**ทดสอบว่า UDP 8189 เปิดแล้ว** (telnet ใช้ไม่ได้ — telnet เป็น TCP):
+```bash
+# บน server: หยุด container ชั่วคราว แล้วเปิดฟังพอร์ต
+docker compose stop && nc -u -l 8189
+# บน Mac: พิมพ์ข้อความแล้วกด Enter — ถ้าข้อความไปโผล่ที่ server = firewall เปิดแล้ว
+nc -u <PUBLIC-IP ของ server> 8189
+# เสร็จแล้ว Ctrl+C ทั้งสองฝั่ง และเปิด container กลับ (แบบ B ใส่ -f … ด้วย)
+docker compose start
+```
+
+### 4.6 คำสั่งที่ใช้บ่อย
+| | แบบ A | แบบ B (หลัง nginx) |
+|---|---|---|
+| อัปเดตเป็นเวอร์ชันล่าสุด | `git pull && docker compose up -d --build` | `git pull && docker compose -f docker-compose.yml -f compose.behind-proxy.yml up -d --build` |
+| ดูสถานะ / พอร์ต | `docker compose ps` | `docker compose -f docker-compose.yml -f compose.behind-proxy.yml ps` |
+| ดู log | `docker compose logs -f` | (เหมือนกัน) `docker compose logs -f` |
+| restart (เช่น IP เปลี่ยน, แก้ `.env`) | `docker compose up -d` | `docker compose -f docker-compose.yml -f compose.behind-proxy.yml up -d` |
+| หยุด | `docker compose down` | `docker compose -f docker-compose.yml -f compose.behind-proxy.yml down` |
+
+- `git pull` ไม่แตะ `.env` (อยู่ใน `.gitignore`)
+- แก้ `web/`, `Caddyfile`, `mediamtx.yml`, `relay/` → ต้อง `up -d --build` (ไฟล์ถูกฝังใน image)
+- `restart: unless-stopped` → เปิดเองหลังรีบูต (ต้อง `sudo systemctl enable docker`)
+
+### 4.7 แก้ปัญหา server
 | อาการ | สาเหตุ / วิธีแก้ |
 |---|---|
-| `nginx -t`: `duplicate "connection_upgrade" variable` | มี `map` อยู่แล้ว → ลบบล็อก 3.1 ออก |
-| `/tesla/` ได้ 502 Bad Gateway | nginx ไปไม่ถึง `<LXC>:8088` — เช็ก IP, `docker compose … ps`, firewall TCP 8088 |
-| หน้าเว็บขึ้นแต่แตะ/พิมพ์ไม่ได้, ขั้นที่ 5 ไม่ได้ 101 | ขาด `proxy_http_version 1.1` / `Upgrade` / `Connection` หรือ `map` |
-| แตะได้แต่ค้างที่ `waiting for video…` | UDP 8189 ไม่ถึง LXC หรือ `DOMAIN` ไม่ได้ชี้ IP บ้าน |
-| แอปบน Mac ขึ้น `Disconnected (exit …)` วน | Server ในแอปต้องมี `/tesla` (ไม่มี `/` ท้ายก็ได้) และ Token ตรงกับ `.env` |
+| `docker ps` ไม่แสดงพอร์ต / container restart วน | ดู `docker compose logs --tail 40` — มี nginx อยู่แล้วแต่รันแบบ A? Docker Compose ต่ำกว่า v2.24 (`!override` ไม่ทำงาน)? |
+| log `[caddy] … obtaining certificate` แต่มี nginx อยู่แล้ว | รันผิดแบบ → `docker compose down` แล้วรันแบบ B |
+| log `lookup … on 127.0.0.53:53 … connection refused` | DNS ใน container ใช้ไม่ได้ (เช็ก `docker run --rm alpine nslookup google.com`) |
+| `nginx -t`: `duplicate "connection_upgrade" variable` | มี `map` อยู่แล้ว → ลบบล็อก 2.1 ออก |
+| `/tesla/` ได้ 502 Bad Gateway | nginx ไปไม่ถึง `<server>:8088` — เช็ก `proxy_pass`, container Up, firewall |
+| หน้าเว็บขึ้นแต่แตะ/พิมพ์ไม่ได้ / ไม่ได้ 101 | ขาด `proxy_http_version 1.1` / `Upgrade` / `Connection` หรือ `map` |
+| แอปขึ้น `Disconnected (exit …)` วน | Server URL (แบบ B ต้องมี `/tesla`) หรือ Token ไม่ตรง `.env` — ดู Log ในแอป |
+| log `created by …` แล้ว `closed: terminated` / Tesla ค้าง `waiting for video…` | UDP 8189 ไปไม่ถึง (firewall 4.5) หรือ `DOMAIN` ไม่ได้ชี้ public IP ของ server |
+| log `WebRTC doesn't support H264 streams with B-frames` | ผู้ส่ง (เช่นแอป iPad) ส่ง B-frames → ปิด B-frames ในแอปนั้น |
 | เปิด `https://home.example.com/tesla` แล้วไปหน้าเว็บหลัก | ขาด `location = /tesla { return 301 /tesla/; }` |
-
-> ถ้ามี subdomain แยกให้ระบบนี้ (เช่น `screen.example.com`) ใช้ [nginx/tesla-display.conf](nginx/tesla-display.conf)
-> แทนได้ — ขั้นตอนเหมือนกัน แค่ไม่มี `/tesla`
-
-### 4.3 ใช้งาน
-1. แอป → Route **Home Server** → Server `https://<DOMAIN>` (หรือ `https://<DOMAIN>/tesla` ถ้าใช้ prefix), Token = `PUBLISH_TOKEN` → **Start**
-2. Tesla browser → `https://<DOMAIN>` (หรือ `…/tesla/`) → ใส่ `CONTROL_PIN` (หรือ *View only* เพื่อดูอย่างเดียว)
 
 ---
 
