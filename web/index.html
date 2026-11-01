@@ -61,6 +61,20 @@
   <button type="button" id="viewOnly">View only</button>
 </form></div>
 <script>
+// เต็มจอบน Tesla: รถซ่อนแถบ URL ให้เฉพาะหน้าที่เปิดใน Theater → YouTube จึงพาไปผ่าน youtube.com/redirect
+// ขากลับแนบ ?fs=1 กันวน (เห็น fs = ไม่ redirect ซ้ำ) — เฉพาะ browser ของ Tesla; Mac/iPad/PC เปิดหน้า viewer ตามปกติ
+(() => {
+  if (new URLSearchParams(location.search).has('fs') || !/\bTesla\//.test(navigator.userAgent)) return;
+  let last = 0;
+  try { last = Number(sessionStorage.getItem('fsRedirect')) || 0; } catch {}
+  if (Date.now() - last < 60000) return; // กันวนอีกชั้น ถ้า fs หายระหว่างทาง
+  try { sessionStorage.setItem('fsRedirect', String(Date.now())); } catch {}
+  const back = new URL(location.href);
+  back.searchParams.set('fs', '1');
+  location.replace('https://www.youtube.com/redirect?q=' + encodeURIComponent(back.href));
+  throw new Error('redirecting to full screen'); // หยุดสคริปต์ที่เหลือ (ไม่ต้องต่อ WHEP ก่อนออกจากหน้า)
+})();
+
 const video = document.getElementById('v');
 const statusEl = document.getElementById('status');
 const WHEP_URL = new URL('screen/whep', location.href).toString();

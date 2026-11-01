@@ -349,9 +349,12 @@ browser ปกติของ Tesla ซ่อนแถบ URL ไม่ได้
    ```
 3. ถ้า YouTube ถามยืนยัน → กด **Go to site** → หน้า Tesla Display เปิดเต็มจอ ไม่มีแถบ URL
 
-**ทางลัด (ไม่ต้องพิมพ์ลิงก์ YouTube ยาวๆ):** เปิด `<URL ของคุณ>full` (เช่น `https://home.example.com/tesla/full`)
-หน้านี้สร้างลิงก์ `youtube.com/redirect?q=…` ให้แล้ว redirect ไปเอง — กดดาว ⭐ เก็บเป็น favorite ไว้ครั้งเดียว
-(ยังไม่ได้ยืนยันว่าเปิดจาก browser ปกติแล้วรถจะสลับเป็นเต็มจอให้หรือไม่ — ถ้าไม่ ให้เปิดจากใน Theater → YouTube)
+**ทางลัด (ไม่ต้องพิมพ์ลิงก์ YouTube ยาวๆ):** บน browser ของ Tesla หน้าหลัก `<URL ของคุณ>` จะ redirect ผ่าน YouTube ให้เอง
+(ขากลับเป็น `<URL ของคุณ>?fs=1` = หน้า viewer ไม่ redirect ซ้ำ; อุปกรณ์อื่นไม่โดน redirect) — ถ้าไม่ redirect ให้เปิด
+`<URL ของคุณ>full` (เช่น `https://home.example.com/tesla/full`) ซึ่งบังคับ redirect เสมอ
+หน้านี้สร้างลิงก์ `youtube.com/redirect?q=…` ให้แล้ว redirect ไปเอง
+⚠️ ต้องเปิดจาก**ใน Theater → YouTube** เท่านั้น — เปิดจาก browser ปกติแถบ URL ยังอยู่ (ทดสอบแล้ว: รถเต็มจอให้เฉพาะแอปที่เปิดจากเมนู Theater)
+ไม่อยากพิมพ์เลย: ใส่ `<URL ของคุณ>` ในคำอธิบายวิดีโอ YouTube ของช่องตัวเอง (ตั้งเป็น Unlisted) → ใน Theater → YouTube เปิดวิดีโอนั้นแล้วกดลิงก์
 
 - ใช้คู่กับ **Extend + Resolution: Auto** — หน้าเว็บรายงานขนาดใหม่ แล้ว Mac ปรับจอเสมือนให้เต็มจอเอง (~1 วินาที)
 - ✅ ทดสอบแล้วบน **Model Y Juniper 2025** (พฤศจิกายน 2026): พื้นที่หน้าเว็บ 1920x1140 @1x (browser ปกติ 1922x1080 @1.53x)
