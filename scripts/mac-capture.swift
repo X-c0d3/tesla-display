@@ -72,6 +72,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     let w: Int, h: Int
     var frame: [UInt8]
     var hasFrame = false
+    var pending = false            // มีเฟรมใหม่รอเขียนอยู่แล้ว (กันคิวงานซ้อนตอนเขียนช้า)
+    var onFrame: (() -> Void)?     // เรียกเมื่อจอเปลี่ยน -> เขียนเฟรมออกทันที ไม่ต้องรอรอบ timer
     let lock = NSLock()
 
     init(w: Int, h: Int) {
@@ -139,7 +141,6 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
         lock.lock()
-        defer { lock.unlock() }
         frame.withUnsafeMutableBytes { dst in
             var offset = 0
             for plane in 0..<2 { // Y แล้วตามด้วย CbCr (interleaved) ความกว้างเท่ากันเป็น byte
@@ -154,6 +155,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             }
         }
         hasFrame = true
+        let schedule = !pending
+        pending = true
+        lock.unlock()
+        if schedule { onFrame?() }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -166,14 +171,31 @@ signal(SIGPIPE, SIG_DFL) // ffmpeg ปิด -> จบโปรแกรม
 let capture = Capture(w: W, h: H)
 let out = FileHandle.standardOutput
 
-// ScreenCaptureKit ส่งเฟรมเฉพาะตอนจอเปลี่ยน -> เขียนเฟรมล่าสุดออกด้วยอัตราคงที่ให้ ffmpeg
-let ticker = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "out", qos: .userInteractive))
-ticker.schedule(deadline: .now(), repeating: 1.0 / Double(fps), leeway: .milliseconds(1))
-ticker.setEventHandler {
+// จอเปลี่ยน -> เขียนเฟรมออกทันที (ไม่ต้องรอรอบ timer, ลด latency เฉลี่ยครึ่งเฟรม)
+// จอนิ่ง (ScreenCaptureKit ไม่ส่งเฟรม) -> timer เขียนเฟรมเดิมซ้ำให้ได้ประมาณ fps ไว้ให้ ffmpeg
+// (เวลาของภาพนับจากจำนวนเฟรม — คลาดเล็กน้อยได้ เพราะหน้าเว็บแยกภาพออกจาก lip sync กับเสียงแล้ว)
+let outQueue = DispatchQueue(label: "out", qos: .userInteractive)
+let frameInterval = 1.0 / Double(fps)
+var lastWrite = DispatchTime(uptimeNanoseconds: 0) // ใช้บน outQueue เท่านั้น
+
+func writeLatest() {
     capture.lock.lock()
     let data = capture.hasFrame ? Data(capture.frame) : nil
+    capture.pending = false
     capture.lock.unlock()
-    if let data { out.write(data) }
+    guard let data else { return }
+    out.write(data)
+    lastWrite = .now()
+}
+
+capture.onFrame = { outQueue.async { writeLatest() } }
+let ticker = DispatchSource.makeTimerSource(queue: outQueue)
+ticker.schedule(deadline: .now(), repeating: frameInterval / 4, leeway: .milliseconds(1))
+ticker.setEventHandler {
+    // เขียนซ้ำเฉพาะเมื่อไม่มีเฟรมออกไปเกือบ 1 รอบแล้ว
+    if Double(DispatchTime.now().uptimeNanoseconds - lastWrite.uptimeNanoseconds) / 1e9 >= frameInterval * 0.95 {
+        writeLatest()
+    }
 }
 
 var activeStream: SCStream?

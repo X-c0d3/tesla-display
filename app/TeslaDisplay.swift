@@ -268,10 +268,12 @@ final class Controller: ObservableObject {
         ] + audioArgs + audioMap + [
             // libx264 zerolatency: POC type 2 (ไม่มีการสลับลำดับเฟรม) — h264_videotoolbox ใช้ POC type 0
             // ซึ่งพอมี packet loss แล้ว mediamtx เข้าใจผิดว่ามี B-frames แล้วตัดคนดู
-            // bufsize ครึ่งวินาที = จำกัดขนาดเฟรม (keyframe) ไม่ให้ระเบิดเป็นก้อนจน UDP หาย
+            // latency: keyframe ก้อนใหญ่ใช้เวลาส่งหลายสิบ ms -> รถต้องตั้ง jitter buffer เผื่อ
+            //   bufsize 1/8 วินาที = จำกัดขนาด keyframe, -g 2 วินาที = keyframe ห่างขึ้น,
+            //   -sc_threshold 0 = ไม่แทรก keyframe ตอนสลับหน้าต่าง (จอเปลี่ยนเยอะ)
             "-c:v", "libx264", "-preset", s.fps > 30 ? "superfast" : "veryfast", "-tune", "zerolatency",
-            "-profile:v", "main", "-bf", "0", "-g", "\(s.fps)",
-            "-b:v", "\(s.bitrate)M", "-maxrate", "\(s.bitrate)M", "-bufsize", "\(max(1, s.bitrate / 2))M",
+            "-profile:v", "main", "-bf", "0", "-g", "\(s.fps * 2)", "-sc_threshold", "0",
+            "-b:v", "\(s.bitrate)M", "-maxrate", "\(s.bitrate)M", "-bufsize", "\(s.bitrate * 1000 / 8)k",
             "-f", "whip", "-authorization", s.token, whip,
         ]
 

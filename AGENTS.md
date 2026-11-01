@@ -50,7 +50,7 @@ Generated / ignored (see `.gitignore`): `build/`, `.cache/`, `.bin/`, `.env`, `*
 ## Pipeline
 ```
 mac-capture (SCK, NV12 @ fixed fps on stdout; audio → FIFO)
-  → ffmpeg: libx264 zerolatency (-bf 0 -g fps, VBV) + libopus 128k → -f whip
+  → ffmpeg: libx264 zerolatency (-bf 0 -g 2*fps -sc_threshold 0, VBV bitrate/8) + libopus 128k → -f whip
   → mediamtx (NAS, or bundled on Mac at 127.0.0.1:8889) → WHEP → web/index.html <video>
 input: viewer → WebSocket → (relay on NAS | agent's local WS server) → mac-input-agent → CGEvent
 ```
@@ -85,7 +85,13 @@ Don't post real input events while testing (pad/click messages move the user's r
 - **Encoder is libx264 `-tune zerolatency` (NOT h264_videotoolbox).** VideoToolbox emits POC type 0 with no
   `max_num_reorder_frames`; with any packet loss mediamtx's DTS extractor mis-detects B-frames and closes every
   viewer ("WebRTC doesn't support H264 streams with B-frames") → viewer drop/reconnect loops. x264 zerolatency =
-  POC type 2 / reorder 0. `-bufsize` = bitrate/2 caps keyframe bursts (Colima/cellular drop UDP bursts).
+  POC type 2 / reorder 0. `-bufsize` = bitrate/8 caps keyframe bursts (they cost tens of ms on the uplink and
+  Chrome sizes the jitter buffer for them; Colima/cellular also drop UDP bursts). Measured on a detailed 1920x1140
+  still @8M/60: max keyframe 260 KB → 120 KB vs bitrate/2, first-frame SSIM 0.902 → 0.895, equal by frame 30.
+  `-g 2*fps` (fewer keyframes; a new viewer waits ≤ 2 s) and `-sc_threshold 0` (no extra IDR on window switches).
+- **mac-capture writes a frame as soon as SCK delivers one** (`onFrame` → out queue, `pending` flag so writes never
+  queue up) and a timer only repeats the last frame after ~1 frame interval of silence. pts still come from frame
+  count; small drift is fine because the viewer is out of the A/V lip-sync group (see below).
   Cost: veryfast 1920x1200@30 ≈ 17x realtime, superfast @60 ≈ 13x on Apple Silicon.
 - **Viewer must not leak RTCPeerConnections:** Chrome caps PCs per page (closed ones count until GC). The viewer
   retries WHEP when no publisher is live, so `closePc()` nulls handlers + `pc` and retries back off 2s → 15s.
@@ -108,9 +114,16 @@ Don't post real input events while testing (pad/click messages move the user's r
   granting, the app must be **quit and reopened**. The app stops retrying when capture logs a TCC denial.
 - **Tesla browser:** won't open raw-IP/plain-http on the internet route (needs a domain + HTTPS); must be parked
   (no video while driving); audio needs a user tap (autoplay policy); WebSockets drop often → viewer reconnects.
-  Whether it accepts self-signed https / http on a LAN IP (Direct Wi-Fi) is **not yet verified on the car**.
+  Direct Wi-Fi is **on hold**: on the car (Juniper 2025, home Wi-Fi, same /24 as the Mac) both
+  `https://192.168.137.166:8443` and `http://…:8080` gave ERR_CONNECTION_REFUSED while the Mac served them fine and
+  saw no incoming connection → the car refuses before reaching the Mac (raw-IP URL, non-standard port, or LAN block —
+  not narrowed down; self-signed cert never got tested). User does not want external DNS helpers (sslip.io/nip.io).
   Full screen without the URL bar works via Theater → YouTube → `youtube.com/redirect?q=<viewer URL>` (verified on
   Model Y Juniper 2025): viewport 1920x1140 @1x there vs 1922x1080 @1.53x in the normal browser.
+  `/` auto-redirects every device through `youtube.com/redirect?q=<viewer>?fs=1` unless `?fs` is present (loop guard +
+  60 s sessionStorage guard). Measured in Theater on the car: UA `Mozilla/5.0 (X11; Linux x86_64) … Chrome/148.0.0.0
+  Safari/537.36 Tesla/2026.38.6 TESLA_AUTO_…_2025_TESLA_MODELY`; Extend + Auto gives size = view = 1920x1140,
+  jitterbuf ~25 ms, decode ~6 ms, RTT ~33 ms (Home Server on Oracle, car on home Wi-Fi).
 - **Colima** forwards only TCP unless started with `colima start --network-address` (address 192.168.64.2).
   The user's other container `acc-nginx` owns ports 443 and 8089 → local override uses 8088.
 - macOS has no virtual-gamepad API without a restricted entitlement → gamepad is mapped to keyboard/mouse

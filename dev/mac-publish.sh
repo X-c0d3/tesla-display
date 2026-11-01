@@ -45,9 +45,11 @@ if [[ "${AUDIO:-1}" == "1" ]]; then
   AUDIO_OUT=(-map 0:v -map 1:a -c:a libopus -b:a 128k -ar 48000)
 fi
 
+# keyframe เล็ก (VBV 1/8 วินาที) = ส่งเป็นก้อนสั้น -> jitter buffer บนรถต่ำ (BITRATE เช่น 8M -> 1000k)
+BUFSIZE="$(( ${BITRATE%M} * 1000 / 8 ))k"
 "$CAP" stream "$DEV" "$W" "$H" "$FPS" $FIFO | ffmpeg -hide_banner -loglevel warning \
   -f rawvideo -pix_fmt nv12 -color_range tv -video_size "${W}x${H}" -framerate "$FPS" -thread_queue_size 64 -i - \
   ${AUDIO_IN[@]+"${AUDIO_IN[@]}"} ${AUDIO_OUT[@]+"${AUDIO_OUT[@]}"} \
-  -c:v libx264 -preset veryfast -tune zerolatency -profile:v main -bf 0 -g "$FPS" \
-  -b:v "$BITRATE" -maxrate "$BITRATE" -bufsize "$BITRATE" \
+  -c:v libx264 -preset veryfast -tune zerolatency -profile:v main -bf 0 -g "$((FPS * 2))" -sc_threshold 0 \
+  -b:v "$BITRATE" -maxrate "$BITRATE" -bufsize "$BUFSIZE" \
   -f whip -authorization "$TOKEN" "${SCREEN_URL%/}/screen/whip"

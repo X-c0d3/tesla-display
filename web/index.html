@@ -9,6 +9,7 @@
   /* รักษาสัดส่วนภาพ (contain) — Extend + Resolution Auto ขนาดตรงกับหน้าจออยู่แล้วจึงเต็มจอไม่มีขอบดำ
      ต่างกันไม่เกิน 3% (เช่น ช่วงที่ Auto ยังไม่ปรับ) ยืดให้เต็ม (fill) ดีกว่ามีขอบดำบางๆ */
   video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #fx { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   #status { position: fixed; top: 12px; left: 12px; color: #aaa; font: 14px system-ui, sans-serif; transition: opacity .5s; pointer-events: none; }
   #status.hide { opacity: 0; }
   #bar { position: fixed; right: 12px; bottom: 12px; max-width: calc(100% - 24px); display: flex; flex-wrap: wrap;
@@ -37,6 +38,7 @@
 </head>
 <body>
 <video id="v" autoplay muted playsinline></video>
+<canvas id="fx"></canvas>
 <div id="status">connecting…</div>
 <div id="stats"></div>
 <textarea id="kb" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
@@ -273,6 +275,69 @@ function norm(ev) {
   return { x: c((ev.clientX - ox) / w), y: c((ev.clientY - oy) / h) };
 }
 
+// วาดจุด/เส้นตามนิ้วบนรถทันที (ไม่ต้องรอภาพจาก Mac ไป-กลับ) -> รู้สึกว่าตอบสนองเร็วขึ้น
+// แตะ = วงขยาย, แตะค้าง (right click) = วงสองชั้น, ลาก = เส้นจางตามนิ้ว
+const fx = document.getElementById('fx');
+const fxc = fx.getContext('2d');
+const fxMarks = [], fxTrailPts = [];
+const FX_MARK_MS = 400, FX_TRAIL_MS = 300, FX_COLOR = '79,140,255';
+let fxRunning = false;
+
+function fxSize() {
+  const d = window.devicePixelRatio || 1;
+  fx.width = Math.round(innerWidth * d);
+  fx.height = Math.round(innerHeight * d);
+  fxc.setTransform(d, 0, 0, d, 0, 0);
+}
+fxSize();
+addEventListener('resize', fxSize);
+
+function fxStart() {
+  if (fxRunning) return;
+  fxRunning = true;
+  requestAnimationFrame(fxDraw);
+}
+function fxMark(x, y, kind) { fxMarks.push({ x, y, kind, t: performance.now() }); fxStart(); }
+function fxTrail(x, y) { fxTrailPts.push({ x, y, t: performance.now() }); fxStart(); }
+
+function fxRing(x, y, r, alpha, width) {
+  fxc.beginPath();
+  fxc.arc(x, y, r, 0, 2 * Math.PI);
+  fxc.strokeStyle = `rgba(${FX_COLOR},${alpha})`;
+  fxc.lineWidth = width;
+  fxc.stroke();
+}
+
+function fxDraw(now) {
+  fxc.clearRect(0, 0, innerWidth, innerHeight);
+  while (fxMarks.length && now - fxMarks[0].t > FX_MARK_MS) fxMarks.shift();
+  while (fxTrailPts.length && now - fxTrailPts[0].t > FX_TRAIL_MS) fxTrailPts.shift();
+  for (const m of fxMarks) {
+    const k = Math.max(0, now - m.t) / FX_MARK_MS;
+    fxRing(m.x, m.y, 12 + 22 * k, 0.9 * (1 - k), 3);
+    if (m.kind === 'right') fxRing(m.x, m.y, 6 + 10 * k, 0.9 * (1 - k), 3);
+  }
+  fxc.lineCap = 'round';
+  for (let i = 1; i < fxTrailPts.length; i++) {
+    const a = fxTrailPts[i - 1], b = fxTrailPts[i];
+    fxc.beginPath();
+    fxc.moveTo(a.x, a.y);
+    fxc.lineTo(b.x, b.y);
+    fxc.strokeStyle = `rgba(${FX_COLOR},${0.8 * (1 - Math.max(0, now - b.t) / FX_TRAIL_MS)})`;
+    fxc.lineWidth = 6;
+    fxc.stroke();
+  }
+  if (mode === 'drag' && fxTrailPts.length) {
+    const p = fxTrailPts[fxTrailPts.length - 1];
+    fxc.beginPath();
+    fxc.arc(p.x, p.y, 9, 0, 2 * Math.PI);
+    fxc.fillStyle = `rgba(${FX_COLOR},0.85)`;
+    fxc.fill();
+  }
+  if (fxMarks.length || fxTrailPts.length) requestAnimationFrame(fxDraw);
+  else { fxc.clearRect(0, 0, innerWidth, innerHeight); fxRunning = false; }
+}
+
 // touch: แตะ = click, แตะค้าง = right click, ลาก = drag, สองนิ้ว = scroll
 const pointers = new Map();
 let mode = null, start = null, holdTimer = null;
@@ -284,9 +349,11 @@ video.addEventListener('pointerdown', (e) => {
   if (pointers.size === 1) {
     mode = 'pending';
     start = { ev: e, p: norm(e) };
+    fxMark(e.clientX, e.clientY, 'tap');
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
       if (mode !== 'pending') return;
+      fxMark(start.ev.clientX, start.ev.clientY, 'right');
       send({ t: 'down', b: 2, ...start.p });
       send({ t: 'up', b: 2, ...start.p });
       mode = 'done';
@@ -304,8 +371,12 @@ video.addEventListener('pointermove', (e) => {
     clearTimeout(holdTimer);
     mode = 'drag';
     send({ t: 'down', b: 0, ...start.p });
+    fxTrail(start.ev.clientX, start.ev.clientY);
   }
-  if (mode === 'drag') send({ t: 'move', ...norm(e) });
+  if (mode === 'drag') {
+    send({ t: 'move', ...norm(e) });
+    fxTrail(e.clientX, e.clientY);
+  }
   if (mode === 'scroll') send({ t: 'scroll', dx: (e.clientX - prev.x) / 2, dy: (e.clientY - prev.y) / 2 });
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 });
