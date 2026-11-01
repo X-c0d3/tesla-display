@@ -666,7 +666,7 @@ struct ContentView: View {
     @State private var display = 0
     @State private var showLog = false
     @State private var showToken = false
-    @State private var mainHeight: CGFloat = 600  // ความสูงคอลัมน์หลัก (ให้แผง Log สูงเท่ากัน)
+    static let logWidth: CGFloat = 440
 
     private var statusColor: Color {
         guard c.running else { return .gray }
@@ -675,6 +675,8 @@ struct ContentView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
+        // คอลัมน์หลัก: ชิดบน ยืดตามความกว้างหน้าต่าง และเลื่อนได้ถ้าหน้าต่างเตี้ยกว่าเนื้อหา
+        ScrollView(.vertical) {
         VStack(alignment: .leading, spacing: 14) {
             header
 
@@ -771,7 +773,14 @@ struct ContentView: View {
                                     .textFieldStyle(.roundedBorder)
                                     .font(.system(.title3, design: .monospaced).weight(.semibold))
                                     .frame(width: 140)
-                                    .onChange(of: localPin) { localPin = String(localPin.filter { $0.isLetter || $0.isNumber }.prefix(16)) }
+                                    .onChange(of: localPin) {
+                                        // รับเฉพาะ A-Z a-z 0-9 ไม่เกิน 16 ตัว — เขียนกลับเฉพาะเมื่อต้องตัดจริง
+                                        // (เขียนค่าซ้ำทุกครั้งที่พิมพ์ทำให้ layout ของ AppKit วนจน crash ได้)
+                                        let clean = String(localPin.unicodeScalars
+                                            .filter { $0.isASCII && CharacterSet.alphanumerics.contains($0) }
+                                            .map(Character.init).prefix(16))
+                                        if clean != localPin { localPin = clean }
+                                    }
                                 Button { copy(localPin) } label: { copyIcon(localPin) }
                                     .buttonStyle(.borderless).help("Copy PIN")
                                 Button { localPin = randomPin() } label: { Image(systemName: "dice") }
@@ -853,24 +862,34 @@ struct ContentView: View {
                 }.toggleStyle(.button)
                 Button("Quit") { c.stop(); NSApp.terminate(nil) }
             }
+
+            // เลขเวอร์ชัน (จาก Info.plist: VERSION ตอน build / branch release/<version>) + ผู้พัฒนา (ลิงก์ไป GitHub)
+            HStack(spacing: 4) {
+                Spacer()
+                Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") · by")
+                    .monospacedDigit()
+                Link("X-c0d3", destination: URL(string: "https://github.com/X-c0d3/tesla-display")!)
+                    .help("github.com/X-c0d3/tesla-display")
+            }
+            .font(.caption2)
+            .foregroundStyle(.white.opacity(0.35))
+            .tint(.white.opacity(0.55))
+            .padding(.top, -6)
         }
         .padding(.horizontal, 20)
         .padding(.top, 2)
         .padding(.bottom, 18)
-        .frame(width: 460)
-        .background(GeometryReader { g in
-            Color.clear
-                .onAppear { mainHeight = g.size.height }
-                .onChange(of: g.size.height) { mainHeight = g.size.height }
-        })
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .scrollIndicators(.automatic)
+        .frame(minWidth: 460, idealWidth: 460, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
 
             if showLog {
                 logPanel
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        // ขนาดหน้าต่าง = ขนาดเนื้อหาพอดี (สลับ Route แล้วการ์ดหาย/เพิ่ม หน้าต่างหด/ขยายตาม ไม่ลอยกลาง)
-        .fixedSize()
+        .onChange(of: showLog) { widenWindow(by: showLog ? Self.logWidth : -Self.logWidth) }
         .background {
             ZStack {
                 LinearGradient(colors: [Color(red: 0.09, green: 0.09, blue: 0.11), Color(red: 0.02, green: 0.02, blue: 0.03)],
@@ -990,7 +1009,8 @@ struct ContentView: View {
         .padding(.top, 34)
         .padding(.trailing, 18)
         .padding(.bottom, 18)
-        .frame(width: 440, height: mainHeight)
+        .frame(width: Self.logWidth)
+        .frame(maxHeight: .infinity)
     }
 
     // สีตามระดับ: error = แดง, warning/retry = ส้ม, ที่เหลือ = เทา
@@ -1002,6 +1022,16 @@ struct ContentView: View {
     }
 
     private func randomPin() -> String { String(format: "%06d", Int.random(in: 0...999_999)) }
+
+    // เปิด/ปิดแผง Log: ขยาย/หดหน้าต่างไปทางขวา (ความสูงเดิม) เพื่อไม่ให้คอลัมน์หลักถูกบีบ
+    private func widenWindow(by dx: CGFloat) {
+        DispatchQueue.main.async {
+            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+            var f = window.frame
+            f.size.width = max(460, f.width + dx)
+            window.setFrame(f, display: true, animate: true)
+        }
+    }
 
     // URL ที่ต้องพิมพ์บน Tesla ในโหมด local (IP ของ Mac ในแต่ละวง)
     private var teslaURLs: some View {
@@ -1072,7 +1102,8 @@ struct TeslaDisplayApp: App {
             ContentView().environmentObject(controller)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)  // ลากปรับขนาดได้ (ขั้นต่ำ = ขนาดเล็กสุดของเนื้อหา)
+        .defaultSize(width: 460, height: 880)
         .defaultLaunchBehavior(.presented) // เปิดหน้าต่างทุกครั้ง แม้ครั้งก่อนจะปิดแอปตอนไม่มีหน้าต่าง
         .restorationBehavior(.disabled)
     }
