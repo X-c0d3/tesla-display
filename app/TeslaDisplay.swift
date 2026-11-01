@@ -659,7 +659,7 @@ struct ContentView: View {
     @AppStorage("showStats") private var showStats = false  // แสดง fps / bitrate ที่กำลังส่ง (ปิดเป็นค่าเริ่มต้น)
     @AppStorage("extend") private var extend = true
     @AppStorage("resolution") private var virtualSize = "auto"
-    @AppStorage("local") private var local = false
+    @AppStorage("local") private var local = true  // เริ่มที่ Direct Wi-Fi: ใช้ได้ทันทีโดยไม่ต้องมี server
     @AppStorage("localPin") private var localPin = ""
     @State private var ips: [(name: String, ip: String)] = []
     @State private var copied = ""
@@ -873,6 +873,10 @@ struct ContentView: View {
             .ignoresSafeArea()
         }
         .preferredColorScheme(.dark)
+        .onChange(of: display) {
+            // จำจอที่เลือกทันที (เก็บเป็นชื่อจอ เพราะเลขจอเปลี่ยนได้เมื่อเสียบ/ถอดจอ)
+            if let name = c.displays.first(where: { $0.index == display })?.name { displayName = name }
+        }
         .onChange(of: extend) {
             // สลับ Extend/Mirror ระหว่างส่งภาพ -> หยุดแล้วเริ่มใหม่ด้วยโหมดใหม่
             guard c.running else { return }

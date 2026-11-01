@@ -21,7 +21,11 @@ app/TeslaDisplay.swift     SwiftUI desktop app (single file): UI, Controller (pr
 app/CGVirtualDisplay.h     declarations of PRIVATE CoreGraphics API CGVirtualDisplay (bridging header)
 app/make-icon.swift        renders the app icon PNG at build time
 scripts/build-app.sh       builds build/Tesla Display.app; downloads + checksum-verifies mediamtx & Caddy
-                           into .cache/; ad-hoc codesigns
+                           into .cache/; ad-hoc codesigns. Env: UNIVERSAL=1 (arm64+x86_64 via lipo), VERSION.
+                           App defaults are hardcoded: Route Direct Wi-Fi, Server https://screen.example.com
+.github/workflows/release-app.yml  push branch release/<version> → universal build on macos-15 → tag
+                           v<version> + GitHub Release (zip + SHA256SUMS); re-push = rebuild, moves tag,
+                           --clobber assets. workflow_dispatch = artifacts only. No repo variables/secrets needed.
 scripts/mac-capture.swift  ScreenCaptureKit capture → raw NV12 on stdout (+ optional f32le stereo audio to a FIFO)
 scripts/mac-input-agent.swift  injects input via CGEvent. Modes: relay client (Home Server) or local
                            WebSocket server on 127.0.0.1 (Direct Wi-Fi, env LOCAL_LISTEN/LOCAL_PIN)

@@ -61,6 +61,18 @@ Mac เป็นฝ่ายต่อออกไปหา NAS เอง จึ�
 
 ## 1. ติดตั้งแอปบน Mac
 
+### แบบที่ 1 — ดาวน์โหลดจาก Releases (ง่ายสุด ไม่ต้อง build)
+1. ติดตั้ง ffmpeg: `brew install ffmpeg` (ต้องมี [Homebrew](https://brew.sh))
+2. ดาวน์โหลด **Tesla-Display-v…-macOS.zip** จาก [Releases](https://github.com/X-c0d3/tesla-display/releases/latest)
+   → แตกไฟล์ → ลาก **Tesla Display.app** ไปไว้ใน **Applications** (ใช้ได้ทั้ง Apple Silicon และ Intel, macOS 15+)
+3. แอปไม่ได้ผ่าน notarization ของ Apple — เปิดครั้งแรกให้รันคำสั่งนี้ก่อน:
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Tesla Display.app"
+   ```
+   (หรือเปิดแอป 1 ครั้ง แล้วไปที่ System Settings → Privacy & Security → **Open Anyway**)
+4. ให้สิทธิ์ตามหัวข้อ "ให้สิทธิ์ครั้งแรก" ด้านล่าง
+
+### แบบที่ 2 — build เอง
 ```bash
 git clone https://github.com/X-c0d3/tesla-display.git
 cd tesla-display
@@ -440,6 +452,20 @@ iPad / iPhone (Larix Screencaster) ──WHIP──► NAS (Tesla Display server
 ---
 
 ## 10. สำหรับนักพัฒนา
+
+### ออก release (GitHub Actions)
+push branch ชื่อ `release/<version>` แล้ว GitHub Actions จะ build แอปแบบ universal (Apple Silicon + Intel)
+ให้อัตโนมัติ — สร้าง tag `v<version>` และ Release พร้อมไฟล์ `.zip` + `SHA256SUMS.txt`
+```bash
+git checkout -b release/1.2.0
+git push -u origin release/1.2.0      # → แอปเวอร์ชัน 1.2.0, tag v1.2.0, Release "Tesla Display v1.2.0"
+```
+- push แก้ไขเพิ่มใน branch เดิม = build ใหม่และอัปเดตไฟล์ใน Release เดิม (tag ย้ายไปที่ commit ล่าสุด)
+- รูปแบบเวอร์ชัน: `1.2`, `1.2.0`, `1.2.0-beta.1` (มี `v` นำหน้าก็ได้) — ชื่อ branch ผิดรูปแบบ workflow จะหยุดพร้อมแจ้ง error
+- ทดสอบ build โดยไม่ออก release: Actions → **Build macOS app** → **Run workflow** (ไฟล์อยู่ใน Artifacts)
+- ค่าเริ่มต้นของแอปที่ build ออกมา: Route **Direct Wi-Fi** (ใช้ได้ทันทีโดยไม่ต้องมี server), Server `https://screen.example.com` (ตัวอย่าง)
+- build เองแบบเดียวกับ CI: `UNIVERSAL=1 VERSION=1.2.0 ./scripts/build-app.sh`
+- workflow: [.github/workflows/release-app.yml](.github/workflows/release-app.yml)
 
 ### โครงสร้าง
 ```
