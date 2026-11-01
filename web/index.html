@@ -17,7 +17,7 @@
   #bar button { min-width: 52px; height: 44px; border: 0; border-radius: 10px; background: #333; color: #eee; font: 18px system-ui, sans-serif; }
   #bar button.on { background: #2a6fdb; }
   #stats { position: fixed; top: 12px; right: 12px; display: none; padding: 10px 14px; border-radius: 10px;
-           background: rgba(0,0,0,.65); color: #ddd; font: 13px/1.5 ui-monospace, Menlo, monospace; white-space: pre; pointer-events: none; }
+           background: rgba(0,0,0,.65); color: #ddd; font: 13px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; max-width: 60ch; pointer-events: none; }
   #stats.show { display: block; }
   #kb { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; }
   /* ช่องพิมพ์ต้องมองเห็นได้จริง ไม่งั้น browser บนจอสัมผัส (รวม Tesla) จะไม่เปิดคีย์บอร์ดบนจอ */
@@ -434,6 +434,7 @@ setInterval(async () => {
     'view      ' + innerWidth + 'x' + innerHeight + ' @' + +(window.devicePixelRatio || 1).toFixed(2) + 'x = ' +
       Math.round(innerWidth * (window.devicePixelRatio || 1)) + 'x' + Math.round(innerHeight * (window.devicePixelRatio || 1)) + ' px',
     'route     ' + agentMode + (a ? '   audio ✓' : ''),
+    'ua        ' + navigator.userAgent, // ไว้ดูว่า browser ของรถรายงานตัวเองว่าอะไร (ใช้ตรวจ Tesla สำหรับ redirect เต็มจอ)
   ].join('\n');
 }, 1000);
 
