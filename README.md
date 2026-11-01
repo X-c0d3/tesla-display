@@ -10,6 +10,12 @@
 - 2 เส้นทาง: **Direct Wi-Fi** (ไม่ใช้ server) หรือ **Home Server** (ผ่าน NAS ที่บ้าน ใช้ได้ทุกที่)
 - ส่งจาก **iPad / iPhone** ได้ด้วย (ดูอย่างเดียว ผ่าน Home Server)
 
+![เขียนโค้ดบนจอ Tesla — Extend เป็นจอที่ 2 ของ MacBook](screenshot/IMG_2326.jpg)
+
+| Extend — จอที่ 2 จริง | ลากหน้าต่างไปวางบนจอรถ | 1920x1200 @ 60 fps |
+| :---: | :---: | :---: |
+| ![Extend desktop บนจอ Tesla](screenshot/IMG_2329.jpg) | ![หน้าต่างแอปบนจอ Tesla](screenshot/IMG_2332.jpg) | ![Live 60 fps](screenshot/IMG_2337.jpg) |
+
 > Not affiliated with or endorsed by Tesla, Inc. — "Tesla" is a trademark of Tesla, Inc.
 
 ## สารบัญ
@@ -103,6 +109,10 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 แอปที่ใช้งานจริงยัง build ด้วย `./scripts/build-app.sh` เหมือนเดิม
 
 ## 2. หน้าแอป
+
+| Route: Home Server | Route: Direct Wi-Fi |
+| :---: | :---: |
+| <img src="screenshot/home-server.jpg" width="380" alt="หน้าแอป — Home Server"> | <img src="screenshot/direct-wifi.jpg" width="380" alt="หน้าแอป — Direct Wi-Fi"> |
 
 ### Display
 
