@@ -666,6 +666,7 @@ struct ContentView: View {
     @State private var display = 0
     @State private var showLog = false
     @State private var showToken = false
+    @State private var mainHeight: CGFloat = 600  // ความสูงคอลัมน์หลัก (ให้แผง Log สูงเท่ากัน)
 
     private var statusColor: Color {
         guard c.running else { return .gray }
@@ -857,12 +858,19 @@ struct ContentView: View {
         .padding(.top, 2)
         .padding(.bottom, 18)
         .frame(width: 460)
+        .background(GeometryReader { g in
+            Color.clear
+                .onAppear { mainHeight = g.size.height }
+                .onChange(of: g.size.height) { mainHeight = g.size.height }
+        })
 
             if showLog {
                 logPanel
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        // ขนาดหน้าต่าง = ขนาดเนื้อหาพอดี (สลับ Route แล้วการ์ดหาย/เพิ่ม หน้าต่างหด/ขยายตาม ไม่ลอยกลาง)
+        .fixedSize()
         .background {
             ZStack {
                 LinearGradient(colors: [Color(red: 0.09, green: 0.09, blue: 0.11), Color(red: 0.02, green: 0.02, blue: 0.03)],
@@ -982,8 +990,7 @@ struct ContentView: View {
         .padding(.top, 34)
         .padding(.trailing, 18)
         .padding(.bottom, 18)
-        .frame(width: 440)
-        .frame(maxHeight: .infinity)
+        .frame(width: 440, height: mainHeight)
     }
 
     // สีตามระดับ: error = แดง, warning/retry = ส้ม, ที่เหลือ = เทา
