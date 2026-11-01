@@ -19,3 +19,7 @@ note.txt
 
 # macOS
 .DS_Store
+
+# Xcode (โปรเจกต์ไว้ preview UI)
+xcuserdata/
+*.xcodeproj/project.xcworkspace/

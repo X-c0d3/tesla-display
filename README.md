@@ -98,6 +98,10 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 > build แอปใหม่ทุกครั้ง macOS จะมองเป็นแอปใหม่ (ad-hoc signature) — ถ้าส่งภาพไม่ได้หลัง build
 > ให้ลบ _Tesla Display_ ออกจากรายการสิทธิ์ทั้งสองด้วยปุ่ม **−** แล้วเพิ่มใหม่ด้วย **+**
 
+**แต่ง UI ใน Xcode (Preview):** เปิด `app/TeslaDisplay.xcodeproj` → เปิดไฟล์ `TeslaDisplay.swift` → Editor → Canvas (⌥⌘↩)
+จะเห็นหน้าต่างแอปสดข้างโค้ด — โปรเจกต์นี้มีไว้ดู/แต่ง UI เท่านั้น (ปุ่ม Start ไม่ทำงานจริงใน Preview)
+แอปที่ใช้งานจริงยัง build ด้วย `./scripts/build-app.sh` เหมือนเดิม
+
 ## 2. หน้าแอป
 
 ### Display

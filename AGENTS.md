@@ -19,6 +19,9 @@ Two routes (selectable in the app):
 app/TeslaDisplay.swift     SwiftUI desktop app (single file): UI, Controller (process orchestration,
                            virtual display, local server), AppDelegate
 app/CGVirtualDisplay.h     declarations of PRIVATE CoreGraphics API CGVirtualDisplay (bridging header)
+app/TeslaDisplay.xcodeproj Xcode project for SwiftUI PREVIEW ONLY (target TeslaDisplayPreview, bundle id
+                           local.tesla-screenshare.preview) — references the same TeslaDisplay.swift; the real
+                           app is still built by scripts/build-app.sh. Preview = `ContentView_Previews` (#if DEBUG)
 app/make-icon.swift        renders the app icon PNG at build time
 scripts/build-app.sh       builds build/Tesla Display.app; downloads + checksum-verifies mediamtx & Caddy
                            into .cache/; ad-hoc codesigns. Env: UNIVERSAL=1 (arm64+x86_64 via lipo), VERSION.
@@ -136,7 +139,8 @@ Don't post real input events while testing (pad/click messages move the user's r
 ## Conventions
 - **All user-facing strings in English** (app UI, status, viewer page, CLI log lines). Code comments are Thai —
   keep that style for new comments. `README.md` / `dev/LOCAL-TEST.md` are Thai.
-- Match the existing style: single-file Swift tools compiled with plain `swiftc` (no Xcode project, no SPM);
+- Match the existing style: single-file Swift tools compiled with plain `swiftc` (no SPM; the only Xcode project is
+  `app/TeslaDisplay.xcodeproj`, for previews — never make the release build depend on it);
   top-level code; avoid closures capturing top-level `guard let` locals (Swift error) — pass values in.
 - The viewer and the Mac tools use RELATIVE / base-URL-joined paths (`screen/whep`, `input/viewer`,
   `<server>/screen/whip`, `<server>/input/agent`) so the stack works under a path prefix — keep it that way.

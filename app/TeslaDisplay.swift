@@ -309,7 +309,9 @@ final class Controller: ObservableObject {
             try ff.run()
             capture = cap
             ffmpeg = ff
-            status = "Live\(s.local ? " (local)" : ""): \(displays.first { $0.index == s.display }?.name ?? "display \(s.display)") \(w)x\(h)"
+            let route: String = s.local ? " (local)" : ""
+            let name: String = displays.first { $0.index == s.display }?.name ?? "display \(s.display)"
+            status = "Live\(route): \(name) \(w)x\(h)"
         } catch {
             status = "start failed: \(error.localizedDescription)"
             stop()
@@ -526,9 +528,18 @@ final class Controller: ObservableObject {
         let p = Process()
         p.executableURL = resources.appendingPathComponent("mac-input-agent")
         p.arguments = ["\(s.display)"]
-        p.environment = s.local
-            ? ["LOCAL_LISTEN": "8766", "LOCAL_PIN": s.pin, "CONTROL": s.control ? "1" : "0"]
-            : ["SCREEN_URL": s.url, "TOKEN": s.token, "CONTROL": s.control ? "1" : "0"]
+        // แยกเป็นขั้นๆ พร้อมระบุชนิด: Xcode Preview แทน string literal ด้วย __designTimeString
+        // แล้ว type-check นิพจน์ ternary + dictionary ซ้อนกันไม่ทัน ("unable to type-check … in reasonable time")
+        let control: String = s.control ? "1" : "0"
+        var env: [String: String] = ["CONTROL": control]
+        if s.local {
+            env["LOCAL_LISTEN"] = "8766"
+            env["LOCAL_PIN"] = s.pin
+        } else {
+            env["SCREEN_URL"] = s.url
+            env["TOKEN"] = s.token
+        }
+        p.environment = env
         p.standardOutput = logPipe("input")
         p.standardError = logPipe("input")
         do {
@@ -743,8 +754,7 @@ struct ContentView: View {
                             }
                             GridRow {
                                 Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                                Text(c.teslaScreen.map { "Tesla screen: \($0)" + (virtualSize == "auto" ? " · adjusted" : "") }
-                                 ?? (virtualSize == "auto" ? "Auto: resizes when Tesla opens the page" : "Tesla is your Mac's 2nd display · drag windows onto it"))
+                                Text(resolutionHint)
                                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             }
                         } else {
@@ -875,6 +885,7 @@ struct ContentView: View {
         }
         .scrollIndicators(.automatic)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+        .frame(idealHeight: contentHeight > 0 ? contentHeight : nil) // ความสูง "พอดีเนื้อหา" (ใช้ใน Xcode Preview)
 
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
@@ -968,6 +979,13 @@ struct ContentView: View {
             // จำจอจากชื่อ (เลขจออาจเปลี่ยนเมื่อเสียบ/ถอดจอ)
             if let d = c.displays.first(where: { $0.name == displayName }) { display = d.index }
         }
+    }
+
+    // ข้อความใต้ Resolution (แยกเป็น property: Xcode Preview type-check นิพจน์ยาวๆ ใน body ไม่ทัน)
+    private var resolutionHint: String {
+        let auto = virtualSize == "auto"
+        if let screen = c.teslaScreen { return "Tesla screen: \(screen)" + (auto ? " · adjusted" : "") }
+        return auto ? "Auto: resizes when Tesla opens the page" : "Tesla is your Mac's 2nd display · drag windows onto it"
     }
 
     // คำอธิบายใต้ตัวเลือก Priority (เปลี่ยนตามที่เลือก)
@@ -1188,6 +1206,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { Controller.shared.stop() }
     }
 }
+
+// SwiftUI Preview ใน Xcode (app/TeslaDisplay.xcodeproj) — ใช้ดู/แต่ง UI เท่านั้น ปุ่ม Start ไม่ทำงานจริงใน Preview
+// อยู่ใน #if DEBUG: build-app.sh (swiftc -O) ไม่ compile ส่วนนี้
+#if DEBUG
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        // Preview ไม่มีหน้าต่างจริงให้ปรับความสูง -> ใช้ความสูงพอดีเนื้อหา (idealHeight ของ ScrollView)
+        ContentView()
+            .environmentObject(Controller.shared)
+            .frame(width: 460)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+#endif
 
 @main
 struct TeslaDisplayApp: App {
