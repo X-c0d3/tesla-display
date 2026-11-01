@@ -590,6 +590,16 @@ final class Controller: ObservableObject {
 let teslaRed = Color(red: 0.89, green: 0.12, blue: 0.16)
 
 // การ์ดพื้นโปร่งแสงสำหรับจัดกลุ่มการตั้งค่า
+// ล็อกการตั้งค่าระหว่างส่งภาพ: ไม่ใช้ .disabled เพราะ segmented control ที่ disabled บน dark mode
+// วาดตัวหนังสือของช่องที่เลือกจางจนอ่านไม่ออก -> ปิดการกดแทน แล้วหรี่ทั้งชุดเท่ากัน (ยังอ่านค่าได้)
+extension View {
+    func locked(_ on: Bool) -> some View {
+        allowsHitTesting(!on)
+            .opacity(on ? 0.55 : 1)
+            .help(on ? "Stop to change these settings" : "")
+    }
+}
+
 struct Card<Content: View>: View {
     let title: String
     let icon: String
@@ -779,7 +789,7 @@ struct ContentView: View {
                                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    .disabled(c.running) // สลับ Mode ได้ระหว่างส่งภาพ ส่วนค่าอื่นต้อง Stop ก่อน
+                    .locked(c.running) // สลับ Mode ได้ระหว่างส่งภาพ ส่วนค่าอื่นต้อง Stop ก่อน
                 }
             }
 
@@ -853,7 +863,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .disabled(c.running)
+            .locked(c.running)
 
             if local { teslaURLs }
         }
