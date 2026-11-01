@@ -772,7 +772,11 @@ struct ContentView: View {
                                 Text("Balanced").tag("balanced")
                                 Text("Quality").tag("quality")
                             }.labelsHidden().pickerStyle(.segmented).fixedSize()
-                            .help("Latency: small keyframes, lowest delay · Quality: sharper, bigger keyframes can add delay on slow uploads")
+                        }
+                        GridRow {
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                            Text(priorityHint)
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .disabled(c.running) // สลับ Mode ได้ระหว่างส่งภาพ ส่วนค่าอื่นต้อง Stop ก่อน
@@ -956,6 +960,15 @@ struct ContentView: View {
         }
     }
 
+    // คำอธิบายใต้ตัวเลือก Priority (เปลี่ยนตามที่เลือก)
+    private var priorityHint: String {
+        switch priority {
+        case "quality": return "Sharpest text. Bigger keyframes — may stutter briefly on slow uploads"
+        case "balanced": return "Sharper than Latency, still responsive"
+        default: return "Fastest response — best for typing and touch. Text slightly softer"
+        }
+    }
+
     private func startStreaming() {
         if !extend { displayName = c.displays.first { $0.index == display }?.name ?? "" }
         c.start(PublishSettings(url: serverURL, token: token, display: display,
@@ -1072,7 +1085,6 @@ struct ContentView: View {
             guard contentHeight > 0, viewportHeight > 0,
                   let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
             let dy = contentHeight - viewportHeight
-            NSLog("fitHeight content=%.0f viewport=%.0f window=%.0f", contentHeight, viewportHeight, window.frame.height)
             guard abs(dy) > 2 else { return }
             var f = window.frame
             let maxH = window.screen?.visibleFrame.height ?? f.height
