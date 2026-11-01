@@ -372,16 +372,20 @@ setInterval(async () => {
   const kbps = dt > 0 ? ((v.bytesReceived - p.bytes) * 8) / dt / 1000 : 0;
   const fps = v.framesPerSecond ?? (dt > 0 ? (v.framesDecoded - p.frames) / dt : 0);
   const lost = p ? v.packetsLost - p.lost : 0;
-  const jb = v.jitterBufferEmittedCount ? Math.round((1000 * v.jitterBufferDelay) / v.jitterBufferEmittedCount) : null;
-  statsPrev = { t: now, bytes: v.bytesReceived, frames: v.framesDecoded, lost: v.packetsLost };
+  // jitter buffer / เวลา decode เฉลี่ย "ในวินาทีที่ผ่านมา" (ค่าสะสมตั้งแต่ต้นจะค้างค่าเก่าไว้นาน)
+  const per = (sum, n, psum, pn) => (n > pn ? Math.round((1000 * (sum - psum)) / (n - pn)) : null);
+  const jb = p ? per(v.jitterBufferDelay, v.jitterBufferEmittedCount, p.jbd, p.jbn) : null;
+  const dec = p && v.totalDecodeTime != null ? per(v.totalDecodeTime, v.framesDecoded, p.dect, p.frames) : null;
+  statsPrev = { t: now, bytes: v.bytesReceived, frames: v.framesDecoded, lost: v.packetsLost,
+                jbd: v.jitterBufferDelay, jbn: v.jitterBufferEmittedCount, dect: v.totalDecodeTime };
   statsEl.textContent = [
     'FPS       ' + Math.round(fps || 0),
     'size      ' + (v.frameWidth ? v.frameWidth + 'x' + v.frameHeight : '-'),
     'bitrate   ' + (kbps / 1000).toFixed(1) + ' Mbps',
     'lost/s    ' + Math.max(0, lost) + '   dropped ' + (v.framesDropped ?? 0),
-    'jitterbuf ' + (jb ?? '-') + ' ms',
+    'jitterbuf ' + (jb ?? '-') + ' ms   decode ' + (dec ?? '-') + ' ms',
     'RTT       ' + (rtt != null ? Math.round(rtt * 1000) + ' ms' : '-'),
-    'view      ' + innerWidth + 'x' + innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x  = ' +
+    'view      ' + innerWidth + 'x' + innerHeight + ' @' + +(window.devicePixelRatio || 1).toFixed(2) + 'x = ' +
       Math.round(innerWidth * (window.devicePixelRatio || 1)) + 'x' + Math.round(innerHeight * (window.devicePixelRatio || 1)) + ' px',
     'route     ' + agentMode + (a ? '   audio ✓' : ''),
   ].join('\n');

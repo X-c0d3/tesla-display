@@ -929,7 +929,8 @@ struct ContentView: View {
         if !extend { displayName = c.displays.first { $0.index == display }?.name ?? "" }
         c.start(PublishSettings(url: serverURL, token: token, display: display,
                                 // Extend: ภาพที่ส่งไม่เกินจอรถ (1920x1200) แม้จอเสมือนจะใหญ่กว่า
-                                size: extend ? "1920x1200" : size,
+                                // Auto: จอเสมือน = พิกเซลจริงของรถอยู่แล้ว (เช่น 1922x1080) -> ส่ง 1:1 ห้ามย่อ ไม่งั้นเบลอ
+                                size: extend ? (virtualSize == "auto" ? "3840x2400" : "1920x1200") : size,
                                 fps: fps, bitrate: bitrate, control: control, extend: extend, local: local,
                                 pin: localPin, audio: audio, virtualSize: virtualSize))
     }
