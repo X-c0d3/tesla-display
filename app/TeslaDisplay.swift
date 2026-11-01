@@ -354,6 +354,15 @@ final class Controller: ObservableObject {
         }
     }
 
+    // กุญแจลับประจำเครื่อง (สร้างครั้งเดียว) — pair server ผูกห้องกับกุญแจนี้
+    // Mac เครื่องอื่นที่บังเอิญได้ PIN เดียวกันจะเข้าห้องไม่ได้ (ไม่เตะเจ้าของห้องออก)
+    private var pairKey: String {
+        if let k = UserDefaults.standard.string(forKey: "pairKey"), k.count >= 32 { return k }
+        let k = (0..<2).map { _ in UUID().uuidString.replacingOccurrences(of: "-", with: "") }.joined()
+        UserDefaults.standard.set(k, forKey: "pairKey")
+        return k
+    }
+
     private var supportDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Tesla Display", isDirectory: true)
@@ -422,7 +431,10 @@ final class Controller: ObservableObject {
         var env: [String: String] = ["CONTROL": control]
         env["SCREEN_URL"] = s.url
         env["TOKEN"] = s.local ? s.pin : s.token
-        if s.local { env["PAIR"] = "1" }
+        if s.local {
+            env["PAIR"] = "1"
+            env["PAIR_KEY"] = pairKey
+        }
         p.environment = env
         p.standardOutput = logPipe("input")
         p.standardError = logPipe("input")
@@ -462,6 +474,9 @@ final class Controller: ObservableObject {
                 for line in text.split(whereSeparator: \.isNewline) {
                     if tag == "capture", line.contains("cannot access screen") || line.contains("declined TCC") {
                         self?.permissionDenied = true
+                    }
+                    if tag == "input", line.hasPrefix("PIN in use") {
+                        self?.status = "PIN in use on another Mac — Stop, generate a new PIN, Start"
                     }
                     if tag == "input", line.hasPrefix("viewer-screen ") {
                         let f = line.split(separator: " ")
@@ -706,18 +721,12 @@ struct ContentView: View {
                         GridRow {
                             label("PIN")
                             HStack(spacing: 6) {
-                                TextField("PIN", text: $localPin)
-                                    .textFieldStyle(.roundedBorder)
+                                // PIN = รหัสจับคู่บน pair server ที่คนอื่นใช้ร่วม -> สุ่มใหม่ทุกครั้งที่เปิดแอป/สลับมา Direct Wi-Fi
+                                // (ไม่ให้พิมพ์เอง กัน PIN ซ้ำกับคนอื่นหรือ PIN ที่เดาง่าย)
+                                Text(localPin)
                                     .font(.system(.title3, design: .monospaced).weight(.semibold))
-                                    .frame(width: 140)
-                                    .onChange(of: localPin) {
-                                        // รับเฉพาะ A-Z a-z 0-9 ไม่เกิน 16 ตัว — เขียนกลับเฉพาะเมื่อต้องตัดจริง
-                                        // (เขียนค่าซ้ำทุกครั้งที่พิมพ์ทำให้ layout ของ AppKit วนจน crash ได้)
-                                        let clean = String(localPin.unicodeScalars
-                                            .filter { $0.isASCII && CharacterSet.alphanumerics.contains($0) }
-                                            .map(Character.init).prefix(16))
-                                        if clean != localPin { localPin = clean }
-                                    }
+                                    .textSelection(.enabled)
+                                    .frame(width: 140, alignment: .leading)
                                 Button { copy(localPin) } label: { copyIcon(localPin) }
                                     .buttonStyle(.borderless).help("Copy PIN")
                                 Button { localPin = randomPin() } label: { Image(systemName: "dice") }
@@ -862,9 +871,12 @@ struct ContentView: View {
             c.stop()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { startStreaming() }
         }
+        .onChange(of: local) {
+            if local { localPin = randomPin() }
+        }
         .onAppear {
             c.refresh()
-            if localPin.isEmpty { localPin = randomPin() }
+            localPin = randomPin()
             // จำจอจากชื่อ (เลขจออาจเปลี่ยนเมื่อเสียบ/ถอดจอ)
             if let d = c.displays.first(where: { $0.name == displayName }) { display = d.index }
         }
@@ -989,7 +1001,8 @@ struct ContentView: View {
         return .white.opacity(0.72)
     }
 
-    private func randomPin() -> String { String(format: "%06d", Int.random(in: 0...999_999)) }
+    // 8 หลัก (10^8 แบบ) — พิมพ์บนรถง่าย และ pair server จำกัดการลองเดา
+    private func randomPin() -> String { String(format: "%08d", Int.random(in: 0...99_999_999)) }
 
     // เปิด/ปิดแผง Log: ขยาย/หดหน้าต่างไปทางขวา (ความสูงเดิม) เพื่อไม่ให้คอลัมน์หลักถูกบีบ
     // เปิด/ปิด Log: ขยายหน้าต่างก่อนแล้วค่อยแสดงแผง / ซ่อนแผงก่อนแล้วค่อยหดหน้าต่าง

@@ -243,7 +243,8 @@ final class Client: NSObject, URLSessionWebSocketDelegate {
         let t = session.webSocketTask(with: url)
         task = t
         t.resume()
-        let auth = try! JSONSerialization.data(withJSONObject: ["auth": self.token])
+        // Direct Wi-Fi: key = กุญแจลับประจำเครื่อง ให้ pair server รู้ว่าเป็น Mac เจ้าของห้องเดิม
+        let auth = try! JSONSerialization.data(withJSONObject: ["auth": self.token, "key": env["PAIR_KEY"] ?? ""])
         t.send(.string(String(data: auth, encoding: .utf8)!)) { _ in }
         receive(t)
     }
@@ -263,8 +264,9 @@ final class Client: NSObject, URLSessionWebSocketDelegate {
                     switch m["t"] as? String {
                     case "ok":
                         print("connected to \(self.url.host ?? "") — display \(self.index), control \(self.control ? "on" : "off")")
-                    case "denied": print(self.pair ? "PIN rejected by pairing server (min 6 characters)" : "token denied"); exit(1)
+                    case "denied": print(self.pair ? "PIN rejected by pairing server" : "token denied"); exit(1)
                     case "busy": print("pairing server is busy — retrying")
+                    case "inuse": print("PIN in use by another Mac — generate a new PIN"); exit(1)
                     case "screen": reportViewerScreen(m)
                     case "offer" where self.pair: self.answerOffer(m)
                     default: if self.control { self.injector.handle(m) }

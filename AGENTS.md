@@ -41,7 +41,10 @@ dev/tesla-local-test.sh    serves a diagnostics page (http/https, WebRTC, WebGL,
 web/index.html             the viewer the Tesla loads (both routes). WHEP + WebSocket input + audio + gamepad
 relay/relay.py             Home Server WebSocket relay (viewer ↔ Mac agent), Python websockets 13.1
 relay/pair.py              Direct Wi-Fi pair server: serves web/index.html with data-mode="pair" + rooms keyed by PIN
-                           (/input/agent, /input/viewer; same first message {"auth": PIN}); limits empty-room joins
+                           (/input/agent, /input/viewer; first message {"auth": PIN} + agent "key" = per-Mac secret
+                           from UserDefaults pairKey → env PAIR_KEY; another key on an occupied room gets
+                           {"t":"inuse"}). App regenerates an 8-digit PIN on launch and on switching to Direct
+                           Wi-Fi (not user-editable — rooms are shared by everyone on the server); limits empty-room joins
                            per IP (X-Forwarded-For last hop). Dockerfile.pair + compose.pair.yml (project tesla-pair,
                            port 8090), nginx example location /pair/ in nginx/tesla-display-prefix.conf
 Dockerfile, docker/entrypoint.sh  ONE image/container for the server: mediamtx + Caddy + relay, all on

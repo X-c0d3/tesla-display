@@ -5,12 +5,14 @@
 # ใน Wi-Fi วงเดียวกัน: viewer ส่ง WebRTC offer ผ่านห้อง -> agent ถาม mediamtx บน Mac -> answer กลับมา
 # แล้วภาพ/เสียงวิ่งตรง Mac -> Tesla ทาง UDP (ไม่ผ่าน server นี้); touch/keyboard ยังส่งผ่านห้อง
 import asyncio
+import hmac
 import json
 import os
 import time
 
 from websockets.asyncio.server import serve
 from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Response
 
 WEB = os.environ.get("WEB_DIR", "/srv")
@@ -25,7 +27,7 @@ FAIL_WINDOW = 600
 with open(os.path.join(WEB, "index.html"), "rb") as f:
     PAGE = f.read().replace(b'<html lang="en">', b'<html lang="en" data-mode="pair">', 1)
 
-rooms = {}  # pin -> {"agent": ws | None, "viewers": set()}
+rooms = {}  # pin -> {"agent": ws | None, "key": กุญแจของ Mac เจ้าของห้อง, "viewers": set()}
 fails = {}  # ip -> [เวลาที่เข้าห้องว่าง]
 
 
@@ -50,7 +52,7 @@ def too_many_fails(ip):
 def room(pin):
     r = rooms.get(pin)
     if r is None:
-        r = rooms[pin] = {"agent": None, "viewers": set()}
+        r = rooms[pin] = {"agent": None, "key": "", "viewers": set()}
     return r
 
 
@@ -72,11 +74,18 @@ async def broadcast(r, msg):
             pass
 
 
-async def handle_agent(ws, pin):
+async def handle_agent(ws, pin, key):
     r = room(pin)
     if r["agent"] is not None:
-        await r["agent"].close()  # Mac เดิมต่อใหม่ (เช่นเน็ตหลุด) -> ใช้ตัวใหม่
-    r["agent"] = ws
+        if not hmac.compare_digest(r["key"], key):
+            # Mac เครื่องอื่นได้ PIN ซ้ำ -> ไม่ให้แย่งห้อง (แอปจะบอกให้สุ่ม PIN ใหม่)
+            await ws.send('{"t":"inuse"}')
+            return
+    # Mac เดิมต่อใหม่ (เช่นเน็ตหลุด) -> ใช้ตัวใหม่; ตั้งตัวใหม่ก่อนปิดตัวเก่า
+    # (ระหว่างรอปิด ตัวเก่าจะเก็บกวาดห้อง — ถ้ายังเป็นตัวเก่าอยู่ห้องจะถูกลบทิ้ง)
+    old, r["agent"], r["key"] = r["agent"], ws, key
+    if old is not None:
+        await old.close()
     print(f"agent online ({len(rooms)} rooms)", flush=True)
     try:
         await ws.send('{"t":"ok"}')
@@ -84,9 +93,12 @@ async def handle_agent(ws, pin):
         async for msg in ws:  # answer ของ WebRTC -> ทุก viewer ในห้อง (viewer เลือกเองจาก id)
             if isinstance(msg, str):
                 await broadcast(r, msg)
+    except ConnectionClosed:
+        pass  # เน็ตหลุด/ปิดแอปกลางคัน — ไม่ต้องพิมพ์ traceback
     finally:
         if r["agent"] is ws:
             r["agent"] = None
+            r["key"] = ""
             await broadcast(r, status(r))
         cleanup(pin)
 
@@ -102,6 +114,8 @@ async def handle_viewer(ws, pin):
                     await r["agent"].send(msg)
                 except Exception:
                     pass
+    except ConnectionClosed:
+        pass
     finally:
         r["viewers"].discard(ws)
         cleanup(pin)
@@ -112,6 +126,7 @@ async def handler(ws):
     try:
         first = json.loads(await asyncio.wait_for(ws.recv(), 10))
         pin = str(first.get("auth", ""))
+        key = str(first.get("key", ""))
     except Exception:
         return
     if len(pin) < MIN_PIN or len(pin) > 64:
@@ -122,7 +137,10 @@ async def handler(ws):
         if pin not in rooms and len(rooms) >= MAX_ROOMS:
             await ws.send('{"t":"busy"}')
             return
-        return await handle_agent(ws, pin)
+        if len(key) < 32:
+            await ws.send('{"t":"denied"}')
+            return
+        return await handle_agent(ws, pin, key)
     # viewer: ห้องที่ไม่มี Mac = นับเป็นการเดา (Mac ออฟไลน์ชั่วคราวก็นับ แต่ไม่ถึงเพดานในการใช้งานปกติ)
     if rooms.get(pin, {}).get("agent") is None:
         ip = client_ip(ws)

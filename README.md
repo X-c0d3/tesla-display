@@ -139,7 +139,7 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 
 | ตัวเลือก                                          | ความหมาย                                                                                        |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| **Route: Direct Wi-Fi**                           | ภาพวิ่งตรงใน Wi-Fi วงเดียวกัน — **PIN** (≥ 6 ตัว, สุ่มให้, กด 🎲 สุ่มใหม่) = รหัสจับคู่ + PIN ควบคุม, **Pair server** = URL ที่รถเปิด |
+| **Route: Direct Wi-Fi**                           | ภาพวิ่งตรงใน Wi-Fi วงเดียวกัน — **PIN** (8 หลัก สุ่มใหม่ทุกครั้งที่เปิดแอป/สลับมา Direct Wi-Fi, กด 🎲 สุ่มเอง) = รหัสจับคู่ + PIN ควบคุม, **Pair server** = URL ที่รถเปิด |
 | **Route: Home Server**                            | ส่งผ่าน NAS — ใส่ **Server** (`https://<โดเมน>`) และ **Token** (`PUBLISH_TOKEN`, กด 👁 เพื่อดู) |
 | **Touch / keyboard / gamepad control from Tesla** | ปิดถ้าต้องการให้รถดูอย่างเดียว                                                                  |
 | **Send Mac audio to Tesla**                       | ส่งเสียงระบบของ Mac (Opus 128 kbps) ไปออกลำโพงรถ                                                |
@@ -164,8 +164,10 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 2. **แอป** → Route **Direct Wi-Fi** → ใส่ **Pair server** (ถ้ายังว่าง) → กด **Start**
 3. **Tesla browser** → เปิด URL ของ Pair server (จากการ์ด _Open on Tesla_) → หน้าเว็บพาเข้าเต็มจอผ่าน YouTube เอง
 4. ใส่ **PIN** → มุมซ้ายบนขึ้น `live (direct)`
+   - PIN สุ่มใหม่ทุกครั้งที่เปิดแอป → รถจะขึ้นช่องให้ใส่ PIN ใหม่เอง (PIN เดิมใช้ไม่ได้แล้ว)
 
-- ขึ้น _no Mac online with this PIN_ = PIN ผิด หรือ Mac ยังไม่กด Start (server ไม่บอกว่าแบบไหน เพื่อกันเดา PIN)
+- ขึ้น _no Mac online with this PIN_ = PIN ผิด/เก่า หรือ Mac ยังไม่กด Start (server ไม่บอกว่าแบบไหน เพื่อกันเดา PIN)
+- แอปขึ้น _PIN in use on another Mac_ = บังเอิญได้ PIN ซ้ำกับคนอื่น → Stop, กด 🎲, Start
 - ขึ้น _can't reach the Mac_ = รถกับ Mac อยู่คนละวง หรือ hotspot กั้นเครื่องคุยกัน
 - ภาพ/เสียงไม่ผ่าน server แต่ **แตะ/พิมพ์ยังส่งผ่าน pair server** (หน้าเว็บ https คุยกับ Mac ใน LAN ตรงๆ ไม่ได้)
 
@@ -500,10 +502,11 @@ iPad / iPhone (Larix Screencaster) ──WHIP──► NAS (Tesla Display server
 
 **Direct Wi-Fi**
 
-- PIN = รหัสจับคู่ ต้องใส่ทั้งดูภาพและควบคุม (อย่างน้อย 6 ตัว) — pair server จำกัดการลอง PIN ที่ไม่มี Mac ออนไลน์
-  30 ครั้ง / 10 นาที / IP
+- PIN = รหัสจับคู่ ต้องใส่ทั้งดูภาพและควบคุม — 8 หลัก สุ่มใหม่ทุกครั้งที่เปิดแอป/สลับโหมด (พิมพ์เองไม่ได้)
+  pair server จำกัดการลอง PIN ที่ไม่มี Mac ออนไลน์ 30 ครั้ง / 10 นาที / IP
+- ห้องผูกกับกุญแจลับประจำ Mac (สร้างครั้งเดียว) — Mac เครื่องอื่นที่ได้ PIN ซ้ำแย่งห้องไม่ได้
 - ภาพวิ่งตรงใน LAN: คนนอกวงดูภาพไม่ได้แม้รู้ PIN — แต่ **แตะ/พิมพ์ผ่าน pair server** ใครได้ PIN ไปควบคุม Mac ได้จากทุกที่
-  ขณะที่แอปกด Start อยู่ → ใช้ PIN ที่เดายาก (สุ่มใหม่ด้วย 🎲 หรือตั้งเองให้ยาวขึ้น)
+  ขณะที่แอปกด Start อยู่ → อย่าให้ใครเห็น PIN, กด Stop เมื่อไม่ใช้
 - คนในวงเดียวกันส่งภาพปลอมเข้ามาไม่ได้ (HTTP ของ mediamtx ฟังเฉพาะ 127.0.0.1)
 - เจ้าของ pair server เห็นข้อความจับคู่ (มี IP ใน LAN ของ Mac) และการแตะ/พิมพ์ — ใช้ pair server ที่ไว้ใจ หรือรันเอง
 
