@@ -675,7 +675,8 @@ struct ContentView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-        // คอลัมน์หลัก: ชิดบน ยืดตามความกว้างหน้าต่าง และเลื่อนได้ถ้าหน้าต่างเตี้ยกว่าเนื้อหา
+        // คอลัมน์หลัก: การตั้งค่าเลื่อนได้ (ชิดบน) + แถบสถานะ/ปุ่มติดขอบล่างหน้าต่างเสมอ
+        VStack(spacing: 0) {
         ScrollView(.vertical) {
         VStack(alignment: .leading, spacing: 14) {
             header
@@ -824,7 +825,15 @@ struct ContentView: View {
             .disabled(c.running)
 
             if local { teslaURLs }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 2)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .scrollIndicators(.automatic)
 
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 PulseDot(color: statusColor, active: c.running)
                 Text(c.status).font(.callout.weight(.medium)).foregroundStyle(.white.opacity(0.8)).lineLimit(2)
@@ -857,7 +866,7 @@ struct ContentView: View {
                 Toggle(isOn: $showStats) { Image(systemName: "chart.bar.xaxis") }
                     .toggleStyle(.button)
                     .help(showStats ? "Hide live FPS / bitrate" : "Show live FPS / bitrate")
-                Toggle(isOn: $showLog.animation(.spring(response: 0.35, dampingFraction: 0.85))) {
+                Toggle(isOn: Binding(get: { showLog }, set: { toggleLog($0) })) {
                     Label("Log", systemImage: showLog ? "sidebar.right" : "text.alignleft")
                 }.toggleStyle(.button)
                 Button("Quit") { c.stop(); NSApp.terminate(nil) }
@@ -877,11 +886,9 @@ struct ContentView: View {
             .padding(.top, -6)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 2)
+        .padding(.top, 4)
         .padding(.bottom, 18)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .scrollIndicators(.automatic)
         .frame(minWidth: 460, idealWidth: 460, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
 
             if showLog {
@@ -889,7 +896,6 @@ struct ContentView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .onChange(of: showLog) { widenWindow(by: showLog ? Self.logWidth : -Self.logWidth) }
         .background {
             ZStack {
                 LinearGradient(colors: [Color(red: 0.09, green: 0.09, blue: 0.11), Color(red: 0.02, green: 0.02, blue: 0.03)],
@@ -1024,12 +1030,27 @@ struct ContentView: View {
     private func randomPin() -> String { String(format: "%06d", Int.random(in: 0...999_999)) }
 
     // เปิด/ปิดแผง Log: ขยาย/หดหน้าต่างไปทางขวา (ความสูงเดิม) เพื่อไม่ให้คอลัมน์หลักถูกบีบ
-    private func widenWindow(by dx: CGFloat) {
-        DispatchQueue.main.async {
-            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
-            var f = window.frame
-            f.size.width = max(460, f.width + dx)
-            window.setFrame(f, display: true, animate: true)
+    // เปิด/ปิด Log: ขยายหน้าต่างก่อนแล้วค่อยแสดงแผง / ซ่อนแผงก่อนแล้วค่อยหดหน้าต่าง
+    // (ห้ามให้ความกว้างขั้นต่ำของเนื้อหาเกินหน้าต่าง หรือ resize แบบ animate ระหว่าง SwiftUI กำลัง layout —
+    //  AppKit จะวน Update Constraints ไม่จบแล้ว crash: EXC_BREAKPOINT ใน updateConstraintsForSubtreeIfNeeded)
+    private func toggleLog(_ show: Bool) {
+        guard show != showLog else { return }
+        let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })
+        if show {
+            if let window {
+                var f = window.frame
+                f.size.width += Self.logWidth
+                window.setFrame(f, display: true)
+            }
+            DispatchQueue.main.async { showLog = true }
+        } else {
+            showLog = false
+            DispatchQueue.main.async {
+                guard let window else { return }
+                var f = window.frame
+                f.size.width = max(460, f.width - Self.logWidth)
+                window.setFrame(f, display: true)
+            }
         }
     }
 
