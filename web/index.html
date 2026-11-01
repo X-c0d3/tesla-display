@@ -97,8 +97,10 @@ async function negotiate() {
   pc.addTransceiver('video', { direction: 'recvonly' });
   pc.addTransceiver('audio', { direction: 'recvonly' });
 
+  const ms = new MediaStream();
   pc.ontrack = (e) => {
-    video.srcObject = e.streams[0];
+    ms.addTrack(e.track);
+    if (video.srcObject !== ms) video.srcObject = ms;
     // ลด jitter buffer ให้ latency ต่ำสุด (ถ้า browser รองรับ)
     try { e.receiver.jitterBufferTarget = 0; } catch {}
     try { e.receiver.playoutDelayHint = 0; } catch {}
@@ -117,11 +119,23 @@ async function negotiate() {
       setTimeout(res, 2000);
     });
     const answer = await whepAnswer(pc.localDescription.sdp);
-    await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+    await pc.setRemoteDescription({ type: 'answer', sdp: unsyncAV(answer) });
     setStatus('waiting for video…');
   } catch (err) {
     retry(String(err.message || err));
   }
+}
+
+// แยกภาพกับเสียงออกจากกลุ่ม lip sync: ถ้าอยู่ stream เดียวกัน browser จะหน่วงภาพให้ตรงกับเสียง
+// แต่เวลาของภาพ (นับจากจำนวนเฟรม) กับเสียง (นับจาก sample) คลาดกันเมื่อ Mac ส่งเฟรมได้ไม่ครบ fps
+// -> jitter buffer ของภาพโตขึ้นเรื่อยๆ (วัดบนรถได้ 1.4 วินาที) — จอทำงานสำคัญกว่าเสียงตรงปาก
+function unsyncAV(sdp) {
+  let kind = '';
+  return sdp.split('\r\n').map((l) => {
+    if (l.startsWith('m=')) kind = l.slice(2, 7);
+    if (l.startsWith('a=msid:')) return 'a=msid:' + kind + '-' + l.slice(7);
+    return l.replace(/^(a=ssrc:\d+ msid:)/, '$1' + kind + '-');
+  }).join('\r\n');
 }
 
 // ปิด PeerConnection เก่าให้หมดจริง — browser จำกัดจำนวน PeerConnection ต่อหน้า

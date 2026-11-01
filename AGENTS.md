@@ -90,6 +90,11 @@ Don't post real input events while testing (pad/click messages move the user's r
 - **Viewer must not leak RTCPeerConnections:** Chrome caps PCs per page (closed ones count until GC). The viewer
   retries WHEP when no publisher is live, so `closePc()` nulls handlers + `pc` and retries back off 2s → 15s.
   Never create a PC per retry without closing/backing off ("Cannot create so many PeerConnections").
+- **Viewer splits audio and video out of one lip-sync group** (`unsyncAV()` rewrites the WHEP answer's `msid`).
+  Video pts come from `-framerate` (frame count), audio pts from sample count; when the Mac delivers fewer frames
+  than the fps setting, Chrome delays video to stay in sync with audio and the video jitter buffer grows without
+  bound (measured 1.4 s on the car; reproduced locally with a 45 fps source declared as 60: 18 → 165 ms and rising,
+  1–8 ms once split). Don't merge them back into one stream id.
 - **ffmpeg's WHIP muxer only supports UDP ICE** and aborts if the first candidate is TCP → mediamtx has
   `webrtcLocalTCPAddress: ""`. Don't re-enable ICE-TCP.
 - **No STUN** in mediamtx (`webrtcICEServers2: []`); it delayed answers ~5 s. Public address comes from
