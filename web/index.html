@@ -62,9 +62,10 @@
 </form></div>
 <script>
 // เต็มจอบน Tesla: รถซ่อนแถบ URL ให้เฉพาะหน้าที่เปิดใน Theater → YouTube จึงพาไปผ่าน youtube.com/redirect
-// ขากลับแนบ ?fs=1 กันวน (เห็น fs = ไม่ redirect ซ้ำ) — เฉพาะ browser ของ Tesla; Mac/iPad/PC เปิดหน้า viewer ตามปกติ
+// ขากลับแนบ ?fs=1 กันวน (เห็น fs = ไม่ redirect ซ้ำ) — ทุกอุปกรณ์ (User-Agent ของรถไม่มีคำว่า Tesla ให้ตรวจ)
+// อุปกรณ์อื่นที่ไม่อยากผ่าน YouTube ให้เปิด ?fs=1 ตรงๆ
 (() => {
-  if (new URLSearchParams(location.search).has('fs') || !/\bTesla\//.test(navigator.userAgent)) return;
+  if (new URLSearchParams(location.search).has('fs')) return;
   let last = 0;
   try { last = Number(sessionStorage.getItem('fsRedirect')) || 0; } catch {}
   if (Date.now() - last < 60000) return; // กันวนอีกชั้น ถ้า fs หายระหว่างทาง
