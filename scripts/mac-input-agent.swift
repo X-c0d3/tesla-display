@@ -8,13 +8,12 @@
 //
 // ตัวเลือก (env):
 //   CONTROL=0          ไม่รับ touch/keyboard (ใช้ต่อ relay เพื่อ signalling อย่างเดียว)
-//   LOCAL_LISTEN=8766 LOCAL_PIN=xxxxxx
-//                      โหมด local แบบไม่มี server: เปิด WebSocket ที่ 127.0.0.1:<port> ให้หน้าเว็บที่ Mac เสิร์ฟเอง
-//                      (ผ่าน Caddy บน Mac) ต่อเข้ามาตรง ตรวจ PIN เอง ไม่ต่อ relay ข้างนอก
+//   PAIR=1             โหมด Direct Wi-Fi: SCREEN_URL = pairing server, TOKEN = PIN
+//                      รับ WebRTC offer จาก Tesla ผ่าน pairing server แล้วถาม mediamtx บน Mac (LOCAL_WHEP)
+//                      -> ภาพวิ่งตรง Mac -> Tesla ใน Wi-Fi วงเดียวกัน
 import ApplicationServices
 import CoreGraphics
 import Foundation
-import Network
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -36,11 +35,9 @@ if args.count > 1 && args[1] == "list" {
 }
 
 let env = ProcessInfo.processInfo.environment
-let localPort = env["LOCAL_LISTEN"].flatMap { UInt16($0) }
-guard args.count > 1, let index = Int(args[1]),
-      localPort != nil || (env["SCREEN_URL"] != nil && env["TOKEN"] != nil) else {
+guard args.count > 1, let index = Int(args[1]), env["SCREEN_URL"] != nil, env["TOKEN"] != nil else {
     print("usage: \(args[0]) list | SCREEN_URL=https://... TOKEN=... \(args[0]) <display-index>")
-    print("       LOCAL_LISTEN=8766 LOCAL_PIN=... \(args[0]) <display-index>")
+    print("       PAIR=1 SCREEN_URL=https://<pair server> TOKEN=<PIN> \(args[0]) <display-index>")
     exit(1)
 }
 let displays = activeDisplays()
@@ -228,6 +225,8 @@ final class Client: NSObject, URLSessionWebSocketDelegate {
     let token: String
     let index: Int
     let control = env["CONTROL"] != "0"
+    let pair = env["PAIR"] == "1"
+    let localWHEP = URL(string: env["LOCAL_WHEP"] ?? "http://127.0.0.1:8889/screen/whep")!
     var task: URLSessionWebSocketTask?
     lazy var session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
 
@@ -264,8 +263,10 @@ final class Client: NSObject, URLSessionWebSocketDelegate {
                     switch m["t"] as? String {
                     case "ok":
                         print("connected to \(self.url.host ?? "") — display \(self.index), control \(self.control ? "on" : "off")")
-                    case "denied": print("token denied"); exit(1)
+                    case "denied": print(self.pair ? "PIN rejected by pairing server (min 6 characters)" : "token denied"); exit(1)
+                    case "busy": print("pairing server is busy — retrying")
                     case "screen": reportViewerScreen(m)
+                    case "offer" where self.pair: self.answerOffer(m)
                     default: if self.control { self.injector.handle(m) }
                     }
                 }
@@ -273,68 +274,31 @@ final class Client: NSObject, URLSessionWebSocketDelegate {
             }
         }
     }
-}
 
-// โหมด local: หน้าเว็บบน Mac (Caddy) -> ws://127.0.0.1:<port> -> ฉีด event ตรง ไม่ผ่าน server ข้างนอก
-final class LocalServer {
-    let injector = Injector()
-    let pin: String
-    let control = env["CONTROL"] != "0"
-    var listener: NWListener?
-
-    init(pin: String) { self.pin = pin }
-
-    func start(port: UInt16) throws {
-        let params = NWParameters.tcp
-        let ws = NWProtocolWebSocket.Options()
-        ws.autoReplyPing = true
-        params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
-        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
-        let l = try NWListener(using: params)
-        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
-        l.stateUpdateHandler = { state in
-            if case .ready = state { print("local input server on 127.0.0.1:\(port) — control \(self.control ? "on" : "off")") }
-            if case .failed(let e) = state { print("local input server failed: \(e)"); exit(1) }
-        }
-        l.start(queue: .main)
-        listener = l
-    }
-
-    func accept(_ conn: NWConnection) {
-        conn.start(queue: .main)
-        receive(conn, authed: false)
-    }
-
-    func send(_ conn: NWConnection, _ obj: [String: Any], then done: (() -> Void)? = nil) {
-        guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        let meta = NWProtocolWebSocket.Metadata(opcode: .text)
-        let ctx = NWConnection.ContentContext(identifier: "msg", metadata: [meta])
-        conn.send(content: data, contentContext: ctx, isComplete: true, completion: .contentProcessed { _ in done?() })
-    }
-
-    func receive(_ conn: NWConnection, authed: Bool) {
-        conn.receiveMessage { [weak self] data, _, _, error in
-            guard let self else { return }
-            if error != nil { conn.cancel(); return }
-            guard let data, let m = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-                return self.receive(conn, authed: authed)
+    // Direct Wi-Fi: offer จาก Tesla (ผ่าน pairing server) -> mediamtx บน Mac -> answer กลับไปทางเดิม
+    // answer มี IP ของ Mac ใน Wi-Fi วงนั้น -> Tesla ต่อ UDP ตรงมาที่ Mac
+    func answerOffer(_ m: [String: Any]) {
+        guard let id = m["id"] as? String, let sdp = m["sdp"] as? String else { return }
+        var req = URLRequest(url: localWHEP)
+        req.httpMethod = "POST"
+        req.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data(sdp.utf8)
+        URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            var reply: [String: Any] = ["t": "answer", "id": id]
+            if code == 201 || code == 200, let data, let answer = String(data: data, encoding: .utf8) {
+                reply["sdp"] = answer
+            } else {
+                reply["error"] = code == 404 ? "Mac is not sending video yet" : "Mac video server: \(err?.localizedDescription ?? "HTTP \(code)")"
             }
-            if !authed {
-                let ok = (m["auth"] as? String).map { constantTimeEqual($0, self.pin) } ?? false
-                if !ok {
-                    // หน่วงก่อนตอบ เพื่อให้เดา PIN ช้าลง แล้วปิดหลังส่ง denied ถึงแล้ว (หน้าเว็บจะได้ขึ้นช่องใส่ PIN ใหม่)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        self.send(conn, ["t": "denied"]) { conn.cancel() }
-                    }
-                    return
-                }
-                self.send(conn, ["t": "ok", "online": true, "mode": "direct"])
-                return self.receive(conn, authed: true)
-            }
-            if m["t"] as? String == "screen" { reportViewerScreen(m) }
-            else if self.control { self.injector.handle(m) }
-            self.receive(conn, authed: true)
-        }
+            self?.sendJSON(reply)
+        }.resume()
+    }
+
+    func sendJSON(_ o: [String: Any]) {
+        guard let t = task, let d = try? JSONSerialization.data(withJSONObject: o),
+              let s = String(data: d, encoding: .utf8) else { return }
+        t.send(.string(s)) { _ in }
     }
 }
 
@@ -343,19 +307,6 @@ func reportViewerScreen(_ m: [String: Any]) {
     let w = (m["w"] as? Double) ?? 0, h = (m["h"] as? Double) ?? 0, dpr = (m["dpr"] as? Double) ?? 1
     guard w > 0, h > 0 else { return }
     print("viewer-screen \(Int(w)) \(Int(h)) \(dpr)")
-}
-
-func constantTimeEqual(_ a: String, _ b: String) -> Bool {
-    let x = Array(a.utf8), y = Array(b.utf8)
-    guard x.count == y.count else { return false }
-    return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
-}
-
-if let port = localPort {
-    guard let pin = env["LOCAL_PIN"], pin.count >= 4 else { print("LOCAL_PIN required (>= 4 chars)"); exit(1) }
-    let server = LocalServer(pin: pin)
-    do { try server.start(port: port) } catch { print("listen failed: \(error)"); exit(1) }
-    withExtendedLifetime(server) { dispatchMain() }
 }
 
 let client = Client(base: env["SCREEN_URL"]!, token: env["TOKEN"]!, index: index)

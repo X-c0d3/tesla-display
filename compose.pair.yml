@@ -1,0 +1,14 @@
+# Pairing server สำหรับ Direct Wi-Fi (project แยก ไม่ยุ่งกับ container tesla-display เดิม)
+#   docker compose -f compose.pair.yml up -d --build
+# ให้ nginx ส่ง https://<DOMAIN>/pair/ -> http://<IP เครื่องนี้>:8090/ (ดู nginx/tesla-display-prefix.conf)
+# รับแค่ข้อความจับคู่ + touch/keyboard (ไม่กี่ KB) — ภาพวิ่งตรง Mac -> Tesla ใน Wi-Fi วงเดียวกัน ไม่ต้องเปิด UDP
+name: tesla-pair
+services:
+  tesla-pair:
+    build:
+      context: .
+      dockerfile: Dockerfile.pair
+    image: tesla-pair:latest
+    restart: unless-stopped
+    ports:
+      - "${PAIR_PORT:-8090}:8090"

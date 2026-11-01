@@ -55,12 +55,13 @@ jobs:
         env:
           UNIVERSAL: "1"
           VERSION: ${{ steps.ver.outputs.version }}
+          PAIR_URL: ${{ vars.PAIR_URL }} # (ไม่บังคับ) repo variable = ค่าเริ่มต้น Pair server ของ Direct Wi-Fi
         run: ./scripts/build-app.sh
 
       - name: Verify bundle
         run: |
           APP="build/Tesla Display.app"
-          for bin in MacOS/TeslaDisplay Resources/mac-capture Resources/mac-input-agent Resources/mediamtx Resources/caddy; do
+          for bin in MacOS/TeslaDisplay Resources/mac-capture Resources/mac-input-agent Resources/mediamtx; do
             echo "$bin: $(lipo -archs "$APP/Contents/$bin")"
             lipo "$APP/Contents/$bin" -verify_arch arm64 x86_64
           done
@@ -107,7 +108,7 @@ jobs:
              (หรือเปิดแอป 1 ครั้ง แล้วไปที่ System Settings → Privacy & Security → **Open Anyway**)
           4. เปิดแอป → ให้สิทธิ์ **Screen & System Audio Recording** และ **Accessibility** → Quit แล้วเปิดใหม่
           5. ค่าเริ่มต้น: Direct Wi-Fi · Extend · Resolution Auto · 30 fps · 8 Mbps · เสียงเปิด
-             — ไม่มี server ก็ใช้ได้ทันที (Mac เปิด Internet Sharing แล้วให้ Tesla ต่อ Wi-Fi ของ Mac)
+             — Direct Wi-Fi: Mac กับ Tesla ต่อ Wi-Fi/hotspot มือถือวงเดียวกัน → บน Tesla เปิด URL ของ Pair server แล้วใส่ PIN
              — มี server ของตัวเอง: เลือก Route **Home Server** แล้วใส่ Server URL และ Token
 
           คู่มือเต็ม: [README](../../#readme)

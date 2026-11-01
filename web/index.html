@@ -81,6 +81,9 @@
 const video = document.getElementById('v');
 const statusEl = document.getElementById('status');
 const WHEP_URL = new URL('screen/whep', location.href).toString();
+// Direct Wi-Fi: หน้านี้มาจาก pairing server (relay/pair.py ใส่ data-mode="pair") — ไม่มี mediamtx บน server
+// offer/answer ส่งผ่าน WebSocket ไปให้ Mac แล้วภาพวิ่งตรงจาก Mac ใน Wi-Fi วงเดียวกัน
+const PAIR = document.documentElement.dataset.mode === 'pair';
 let pc = null, retryTimer = null, retryDelay = 2000;
 
 function setStatus(t, hide) {
@@ -89,18 +92,36 @@ function setStatus(t, hide) {
 }
 
 // ---------- video ----------
-// WHEP ไปที่ mediamtx (บน NAS = Home Server, หรือบน Mac ผ่าน Caddy = Direct Wi-Fi)
-let agentMode = 'server', videoStarted = false;
+// WHEP ไปที่ mediamtx บน server (Home Server) หรือผ่าน pairing server ไปถึง mediamtx บน Mac (Direct Wi-Fi)
+let agentMode = 'server', videoStarted = false, everConnected = false, macOnline = false;
+const pendingAnswers = new Map();
 
 function whepAnswer(sdp) {
-  const headers = { 'Content-Type': 'application/sdp' };
-  if (pin) headers.Authorization = 'Bearer ' + pin; // Direct Wi-Fi: Caddy บน Mac ตรวจ PIN ก่อนให้ดูภาพ
-  return fetch(WHEP_URL, { method: 'POST', headers, body: sdp })
+  if (PAIR) return pairAnswer(sdp);
+  return fetch(WHEP_URL, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: sdp })
     .then(async (r) => {
       if (r.status === 401) throw new Error('Enter the PIN to view');
       if (!r.ok) throw new Error('WHEP ' + r.status);
       return r.text();
     });
+}
+
+function pairAnswer(sdp) {
+  return new Promise((resolve, reject) => {
+    if (!wsReady || !macOnline) return reject(new Error('Mac offline'));
+    const id = Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => { pendingAnswers.delete(id); reject(new Error('Mac did not answer')); }, 8000);
+    pendingAnswers.set(id, { resolve, reject, timer });
+    send({ t: 'offer', id, sdp });
+  });
+}
+
+function gotAnswer(m) {
+  const p = pendingAnswers.get(m.id);
+  if (!p) return; // ของ viewer อื่นในห้องเดียวกัน
+  pendingAnswers.delete(m.id);
+  clearTimeout(p.timer);
+  m.sdp ? p.resolve(m.sdp) : p.reject(new Error(m.error || 'no answer'));
 }
 
 function connect() {
@@ -124,8 +145,11 @@ async function negotiate() {
     try { e.receiver.playoutDelayHint = 0; } catch {}
   };
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'connected') { retryDelay = 2000; setStatus('live (' + agentMode + ')', true); }
-    if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) retry('lost connection');
+    if (pc.connectionState === 'connected') { everConnected = true; retryDelay = 2000; setStatus('live (' + agentMode + ')', true); }
+    if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+      // Direct Wi-Fi ต่อไม่ติดเลย = ส่วนใหญ่ Tesla กับ Mac อยู่คนละวง (หรือ hotspot กันเครื่องคุยกันเอง)
+      retry(PAIR && !everConnected ? "can't reach the Mac — is the Tesla on the same Wi-Fi / hotspot as the Mac?" : 'lost connection');
+    }
   };
 
   try {
@@ -204,7 +228,12 @@ pinBox.querySelector('form').addEventListener('submit', (e) => {
   pinInput.blur();
   connectInput();
 });
-document.getElementById('viewOnly').addEventListener('click', () => {
+// Direct Wi-Fi: PIN เป็นรหัสจับคู่ด้วย ไม่มี PIN = ดูภาพไม่ได้ -> ไม่มีปุ่ม View only
+if (PAIR) {
+  document.getElementById('viewOnly').remove();
+  document.querySelector('label[for=pinInput]').firstChild.textContent = 'PIN shown in the Mac app ';
+}
+document.getElementById('viewOnly')?.addEventListener('click', () => {
   viewOnly = true;
   pinBox.classList.remove('show');
   connect();
@@ -221,10 +250,19 @@ function connectInput() {
       const first = !wsReady;
       wsReady = true;
       if (first) reportScreen();
-      agentMode = m.mode || 'server'; // "direct" เมื่อหน้าเว็บมาจาก Mac เอง
+      agentMode = m.mode || 'server'; // "direct" = Direct Wi-Fi (ภาพวิ่งตรงจาก Mac)
       if (!m.online) setStatus('Mac offline');
+      // Direct Wi-Fi: PIN ผิดกับ Mac ยังไม่กด Start แยกกันไม่ได้ (server ไม่บอก เพื่อกันเดา PIN) -> ให้แก้ PIN ได้
+      if (PAIR && m.t === 'ok' && !m.online) askPin('— no Mac online with this PIN. Check it, or press Start on the Mac');
+      if (PAIR && m.online) pinBox.classList.remove('show');
       if (!videoStarted) connect(); // เริ่มภาพครั้งเดียว (WebSocket หลุด/ต่อใหม่ไม่ต้องเริ่มภาพใหม่)
+      // Direct Wi-Fi: Mac เพิ่งออนไลน์ / เพิ่งใส่ PIN ถูก -> ลองต่อภาพทันที ไม่ต้องรอรอบ retry
+      // (WebSocket ต่อใหม่เฉยๆ ขณะ Mac ออนไลน์อยู่แล้ว ไม่เริ่มภาพใหม่)
+      else if (PAIR && m.online && !macOnline && pc?.connectionState !== 'connected') { retryDelay = 2000; connect(); }
+      macOnline = !!m.online;
     }
+    if (m.t === 'answer') gotAnswer(m);
+    if (m.t === 'busy') setStatus('pairing server busy — retrying…');
     if (m.t === 'denied') { pin = null; store.set(null); askPin('— wrong PIN'); }
   };
   ws.onclose = () => {

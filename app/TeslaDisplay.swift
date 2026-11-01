@@ -38,8 +38,8 @@ struct PublishSettings {
     var bitrate: Int
     var control: Bool
     var extend: Bool // true = สร้างจอเสมือนให้ Tesla เป็นจอที่ 2, false = mirror จอที่เลือก
-    var local: Bool  // true = Mac เป็น server เอง (Tesla ต่อตรงผ่าน Wi-Fi/hotspot ไม่ใช้ server ข้างนอก)
-    var pin: String  // โหมด local: PIN ที่ Tesla ต้องใส่เพื่อดู/ควบคุม
+    var local: Bool  // true = Direct Wi-Fi: ภาพวิ่งตรง Mac -> Tesla ใน Wi-Fi วงเดียวกัน, url = pairing server
+    var pin: String  // Direct Wi-Fi: PIN ที่ Tesla ใส่ = รหัสจับคู่บน pairing server
     var audio = true         // ส่งเสียงระบบไปพร้อมภาพ (Opus)
     var virtualSize = "auto" // Extend: ขนาดจอเสมือน (= พื้นที่ทำงาน) หรือ "auto" = ตามจอ Tesla ที่เปิดหน้าเว็บ
     var priority = "latency" // "latency" / "balanced" / "quality" — ดู encoderTuning()
@@ -58,23 +58,6 @@ func encoderTuning(_ priority: String) -> (preset: String, bufDivisor: Int) {
     }
 }
 
-// IPv4 ของ Mac ทุก interface (ไว้แสดง URL ให้พิมพ์บน Tesla) — Internet Sharing (192.168.2.x) ขึ้นก่อน
-func localIPv4s() -> [(name: String, ip: String)] {
-    var result: [(String, String)] = []
-    var ifap: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&ifap) == 0, let first = ifap else { return [] }
-    defer { freeifaddrs(ifap) }
-    for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
-        let ifa = ptr.pointee
-        guard let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET),
-              (ifa.ifa_flags & UInt32(IFF_UP)) != 0, (ifa.ifa_flags & UInt32(IFF_LOOPBACK)) == 0 else { continue }
-        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        getnameinfo(addr, socklen_t(addr.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
-        result.append((String(cString: ifa.ifa_name), String(cString: host)))
-    }
-    return result.sorted { a, _ in a.1.hasPrefix("192.168.2.") }
-}
-
 @MainActor
 final class Controller: ObservableObject {
     static let shared = Controller()
@@ -91,9 +74,6 @@ final class Controller: ObservableObject {
 
     private var capture: Process?
     private var localServer: Process?
-    private var localWeb: Process?
-    static let localHTTPS = 8443
-    static let localHTTP = 8080
     private let localWHIP = "http://127.0.0.1:8889/screen/whip"
     private var ffmpeg: Process?
     private var agent: Process?
@@ -111,8 +91,12 @@ final class Controller: ObservableObject {
             return
         }
         if s.local {
-            guard s.pin.count >= 4 else {
-                status = "PIN must be at least 4 characters"
+            guard s.pin.count >= 6 else {
+                status = "PIN must be at least 6 characters"
+                return
+            }
+            guard URL(string: s.url)?.host != nil else {
+                status = "Enter the Pair server URL first"
                 return
             }
         } else {
@@ -157,9 +141,9 @@ final class Controller: ObservableObject {
         settings = s
         permissionDenied = false
         if s.local {
-            guard startLocalServer(), startLocalWeb(pin: s.pin) else { return stop() }
+            guard startLocalServer() else { return stop() }
         }
-        // โหมด local ต้องมี agent เสมอ เพราะเป็นตัวตรวจ PIN ให้หน้าเว็บบน Mac
+        // Direct Wi-Fi ต้องมี agent เสมอ เพราะเป็นตัวรับ offer จาก Tesla ผ่าน pairing server
         if s.control || s.local { startAgent(s) }
         // ให้ mediamtx บน Mac พร้อมก่อน ffmpeg ส่งภาพเข้า
         DispatchQueue.main.asyncAfter(deadline: .now() + (s.local ? 0.8 : 0)) { [weak self] in
@@ -244,9 +228,8 @@ final class Controller: ObservableObject {
         teslaScreen = nil
         sendStats = nil
         settings = nil
-        for p in [capture, ffmpeg, agent, localServer, localWeb] where p?.isRunning == true { p?.terminate() }
+        for p in [capture, ffmpeg, agent, localServer] where p?.isRunning == true { p?.terminate() }
         localServer = nil
-        localWeb = nil
         capture = nil
         ffmpeg = nil
         agent = nil
@@ -309,7 +292,7 @@ final class Controller: ObservableObject {
             try ff.run()
             capture = cap
             ffmpeg = ff
-            let route: String = s.local ? " (local)" : ""
+            let route: String = s.local ? " (direct)" : ""
             let name: String = displays.first { $0.index == s.display }?.name ?? "display \(s.display)"
             status = "Live\(route): \(name) \(w)x\(h)"
         } catch {
@@ -378,104 +361,9 @@ final class Controller: ObservableObject {
         return dir
     }
 
-    // ใบรับรอง self-signed สร้างครั้งเดียวแล้วใช้ซ้ำ (Tesla กดยอมรับครั้งเดียว)
-    private func ensureCertificate() -> (cert: String, key: String)? {
-        let cert = supportDir.appendingPathComponent("local-cert.pem").path
-        let key = supportDir.appendingPathComponent("local-key.pem").path
-        if FileManager.default.fileExists(atPath: cert), FileManager.default.fileExists(atPath: key) { return (cert, key) }
-        let san = (["192.168.2.1", "172.20.10.1"] + localIPv4s().map(\.ip)).map { "IP:\($0)" } + ["DNS:localhost"]
-        let conf = supportDir.appendingPathComponent("openssl.cnf")
-        let cnf = """
-        [req]
-        distinguished_name = dn
-        x509_extensions = ext
-        prompt = no
-        [dn]
-        CN = Tesla Display (local)
-        [ext]
-        subjectAltName = \(Set(san).sorted().joined(separator: ","))
-        basicConstraints = CA:FALSE
-        keyUsage = digitalSignature, keyEncipherment
-        extendedKeyUsage = serverAuth
-
-        """
-        try? cnf.write(to: conf, atomically: true, encoding: .utf8)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        p.arguments = ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650",
-                       "-config", conf.path, "-keyout", key, "-out", cert]
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = logPipe("cert")
-        do { try p.run() } catch { return nil }
-        p.waitUntilExit()
-        return p.terminationStatus == 0 ? (cert, key) : nil
-    }
-
-    // Caddy บน Mac: เสิร์ฟหน้าเว็บให้ Tesla ทั้ง https:8443 (self-signed) และ http:8080
-    //   /screen/whep -> mediamtx (ต้องมี PIN), /screen/whip ปิดจากภายนอก, /input -> agent
-    private func startLocalWeb(pin: String) -> Bool {
-        guard let tls = ensureCertificate() else {
-            status = "Could not create certificate"
-            return false
-        }
-        let web = resources.appendingPathComponent("web").path
-        let caddyfile = supportDir.appendingPathComponent("Caddyfile")
-        let conf = """
-        {
-        \tadmin off
-        \tauto_https off
-        \tpersist_config off
-        }
-
-        (site) {
-        \thandle /screen/whip* {
-        \t\trespond 403
-        \t}
-        \thandle /screen/* {
-        \t\t@nopin not header Authorization "Bearer \(pin)"
-        \t\trespond @nopin 401
-        \t\treverse_proxy 127.0.0.1:8889
-        \t}
-        \thandle /input/* {
-        \t\treverse_proxy 127.0.0.1:8766
-        \t}
-        \thandle {
-        \t\theader Cache-Control no-store
-        \t\troot * "\(web)"
-        \t\ttry_files {path} {path}.html /index.html
-        \t\tfile_server
-        \t}
-        }
-
-        https://:\(Controller.localHTTPS) {
-        \ttls "\(tls.cert)" "\(tls.key)"
-        \timport site
-        }
-
-        http://:\(Controller.localHTTP) {
-        \timport site
-        }
-
-        """
-        do {
-            try conf.write(to: caddyfile, atomically: true, encoding: .utf8)
-            let p = Process()
-            p.executableURL = resources.appendingPathComponent("caddy")
-            p.arguments = ["run", "--config", caddyfile.path, "--adapter", "caddyfile"]
-            p.environment = ["HOME": supportDir.path, "XDG_DATA_HOME": supportDir.path, "XDG_CONFIG_HOME": supportDir.path]
-            p.standardOutput = logPipe("web")
-            p.standardError = logPipe("web")
-            try p.run()
-            localWeb = p
-            return true
-        } catch {
-            status = "start local web failed: \(error.localizedDescription)"
-            return false
-        }
-    }
-
-    // mediamtx บน Mac สำหรับโหมด local: HTTP ฟังเฉพาะ 127.0.0.1 (ffmpeg + agent เท่านั้น)
-    // ส่วน UDP 8189 เปิดทุก interface ให้ Tesla ในวง hotspot ต่อเข้ามาตรง
+    // mediamtx บน Mac สำหรับ Direct Wi-Fi: HTTP ฟังเฉพาะ 127.0.0.1 (ffmpeg + agent เท่านั้น)
+    // ส่วน UDP 8189 เปิดทุก interface ให้ Tesla ในวง Wi-Fi/hotspot เดียวกันต่อเข้ามาตรง
+    // (answer ที่ agent ส่งกลับผ่าน pairing server มี IP ของ Mac ทุกวงจาก webrtcIPsFromInterfaces)
     private func startLocalServer() -> Bool {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Tesla Display", isDirectory: true)
@@ -532,13 +420,9 @@ final class Controller: ObservableObject {
         // แล้ว type-check นิพจน์ ternary + dictionary ซ้อนกันไม่ทัน ("unable to type-check … in reasonable time")
         let control: String = s.control ? "1" : "0"
         var env: [String: String] = ["CONTROL": control]
-        if s.local {
-            env["LOCAL_LISTEN"] = "8766"
-            env["LOCAL_PIN"] = s.pin
-        } else {
-            env["SCREEN_URL"] = s.url
-            env["TOKEN"] = s.token
-        }
+        env["SCREEN_URL"] = s.url
+        env["TOKEN"] = s.local ? s.pin : s.token
+        if s.local { env["PAIR"] = "1" }
         p.environment = env
         p.standardOutput = logPipe("input")
         p.standardError = logPipe("input")
@@ -698,7 +582,8 @@ struct ContentView: View {
     @AppStorage("resolution") private var virtualSize = "auto"
     @AppStorage("local") private var local = true  // เริ่มที่ Direct Wi-Fi: ใช้ได้ทันทีโดยไม่ต้องมี server
     @AppStorage("localPin") private var localPin = ""
-    @State private var ips: [(name: String, ip: String)] = []
+    // pairing server ของ Direct Wi-Fi: ค่าเริ่มต้นมาจากตอน build (PAIR_URL -> Info.plist) ไม่ฝัง domain ไว้ในโค้ด
+    @AppStorage("pairURL") private var pairURL = Bundle.main.object(forInfoDictionaryKey: "TDPairURL") as? String ?? ""
     @State private var copied = ""
     @State private var display = 0
     @State private var showLog = false
@@ -815,7 +700,7 @@ struct ContentView: View {
                     if local {
                         GridRow {
                             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                            Text("Your Mac is the server — no outside server\nTesla joins the Mac's Wi-Fi, then enters the PIN")
+                            Text("Video goes straight over Wi-Fi — the server only pairs\nTesla and Mac must be on the same Wi-Fi or phone hotspot")
                                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                         GridRow {
@@ -838,6 +723,11 @@ struct ContentView: View {
                                 Button { localPin = randomPin() } label: { Image(systemName: "dice") }
                                     .buttonStyle(.borderless).help("Generate new PIN")
                             }
+                        }
+                        GridRow {
+                            label("Pair server")
+                            TextField("https://pair.example.com", text: $pairURL).textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: .infinity)
                         }
                     } else {
                         GridRow {
@@ -974,7 +864,6 @@ struct ContentView: View {
         }
         .onAppear {
             c.refresh()
-            ips = localIPv4s()
             if localPin.isEmpty { localPin = randomPin() }
             // จำจอจากชื่อ (เลขจออาจเปลี่ยนเมื่อเสียบ/ถอดจอ)
             if let d = c.displays.first(where: { $0.name == displayName }) { display = d.index }
@@ -999,7 +888,7 @@ struct ContentView: View {
 
     private func startStreaming() {
         if !extend { displayName = c.displays.first { $0.index == display }?.name ?? "" }
-        c.start(PublishSettings(url: serverURL, token: token, display: display,
+        c.start(PublishSettings(url: local ? pairURL : serverURL, token: token, display: display,
                                 // Extend: ภาพที่ส่งไม่เกินจอรถ (1920x1200) แม้จอเสมือนจะใหญ่กว่า
                                 // Auto: จอเสมือน = พิกเซลจริงของรถอยู่แล้ว (เช่น 1922x1080) -> ส่ง 1:1 ห้ามย่อ ไม่งั้นเบลอ
                                 size: extend ? (virtualSize == "auto" ? "3840x2400" : "1920x1200") : size,
@@ -1148,34 +1037,27 @@ struct ContentView: View {
         }
     }
 
-    // URL ที่ต้องพิมพ์บน Tesla ในโหมด local (IP ของ Mac ในแต่ละวง)
+    // URL ที่เปิดบน Tesla ใน Direct Wi-Fi (= pairing server) + PIN ที่ต้องใส่
     private var teslaURLs: some View {
         Card(title: "Open on Tesla", icon: "car.side") {
             VStack(alignment: .leading, spacing: 8) {
-                if ips.isEmpty {
-                    Text("No network found — turn on Internet Sharing or join a hotspot first").font(.callout).foregroundStyle(.secondary)
-                }
-                ForEach(ips, id: \.ip) { item in
+                let url = pairURL.trimmingCharacters(in: .whitespaces)
+                if url.isEmpty {
+                    Text("Enter the Pair server URL above").font(.callout).foregroundStyle(.secondary)
+                } else {
                     HStack(spacing: 8) {
-                        let url = "https://\(item.ip):\(Controller.localHTTPS)"
                         Text(url).font(.system(.body, design: .monospaced).weight(.semibold)).textSelection(.enabled)
                         Button { copy(url) } label: { copyIcon(url) }
                             .buttonStyle(.borderless).help("Copy")
-                        Spacer()
-                        Text(item.ip.hasPrefix("192.168.2.") ? "Internet Sharing" : item.name)
-                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Text(verbatim: "Self-signed certificate: the first time, tap Advanced → Proceed\nIf Tesla refuses, try http://<IP>:\(Controller.localHTTP) instead")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Text("PIN: \(localPin)").font(.system(.callout, design: .monospaced)).textSelection(.enabled)
                     Button { copy(localPin) } label: { copyIcon(localPin) }
                         .buttonStyle(.borderless).help("Copy PIN")
-                    Spacer()
-                    Button { ips = localIPv4s() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
-                        .buttonStyle(.borderless).font(.caption)
                 }
+                Text("Connect the Mac and the Tesla to the same Wi-Fi (e.g. your phone's hotspot) first")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }

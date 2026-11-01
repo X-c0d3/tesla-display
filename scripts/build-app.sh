@@ -6,6 +6,7 @@
 # ตัวแปร (ไม่บังคับ — ใช้ตอน build บน GitHub Actions):
 #   UNIVERSAL=1                 build ทั้ง Apple Silicon + Intel ในไฟล์เดียว (ค่าเริ่มต้น = เฉพาะเครื่องนี้)
 #   VERSION=1.2.0               เลขเวอร์ชันของแอป (ค่าเริ่มต้น 1.0)
+#   PAIR_URL=https://…/pair     ค่าเริ่มต้นของ Pair server (Direct Wi-Fi) ในแอป — ว่าง = ผู้ใช้กรอกเอง
 set -euo pipefail
 
 if [[ "$(uname)" != "Darwin" ]]; then
@@ -69,31 +70,11 @@ fetch_mediamtx() {
   echo "$dir/mediamtx"
 }
 
-# Caddy สำหรับโหมด Direct Wi-Fi: เสิร์ฟหน้าเว็บ + HTTPS บน Mac เอง (ดาวน์โหลดครั้งเดียว + ตรวจ sha512)
-CADDY_VER="2.8.4"
-fetch_caddy() {
-  local a; a="$(goarch "$1")"
-  local tgz="caddy_${CADDY_VER}_mac_${a}.tar.gz" dir="$ROOT/.cache/caddy-$CADDY_VER-$a"
-  if [[ ! -x "$dir/caddy" ]]; then
-    mkdir -p "$dir/dl"
-    local base="https://github.com/caddyserver/caddy/releases/download/v$CADDY_VER"
-    curl -fsSL "$base/$tgz" -o "$dir/dl/$tgz"
-    curl -fsSL "$base/caddy_${CADDY_VER}_checksums.txt" -o "$dir/dl/checksums.txt"
-    (cd "$dir/dl" && grep " $tgz\$" checksums.txt | shasum -a 512 -c >/dev/null)
-    tar -xzf "$dir/dl/$tgz" -C "$dir" caddy
-    rm -rf "$dir/dl"
-  fi
-  echo "$dir/caddy"
-}
-
-MTX=() CADDY=()
+MTX=()
 for arch in "${ARCHS[@]}"; do
   MTX+=("$(fetch_mediamtx "$arch")")
-  CADDY+=("$(fetch_caddy "$arch")")
 done
 lipo -create "${MTX[@]}" -output "$APP/Contents/Resources/mediamtx"
-lipo -create "${CADDY[@]}" -output "$APP/Contents/Resources/caddy"
-cp -R "$ROOT/web" "$APP/Contents/Resources/web"
 
 # ไอคอน
 ICONSET="$TMP/AppIcon.iconset"
@@ -122,6 +103,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>TDPairURL</key><string>$(xml_escape "${PAIR_URL:-}")</string>
 </dict>
 </plist>
 EOF
@@ -129,7 +111,7 @@ rm -rf "$TMP"
 
 # ad-hoc sign (build ใหม่ = signature ใหม่ -> macOS อาจถามสิทธิ์ซ้ำ)
 codesign --force -s - "$APP/Contents/Resources/mac-capture" "$APP/Contents/Resources/mac-input-agent" \
-  "$APP/Contents/Resources/mediamtx" "$APP/Contents/Resources/caddy"
+  "$APP/Contents/Resources/mediamtx"
 codesign --force -s - "$APP"
 
 echo "built: $APP (v$VERSION, ${ARCHS[*]})"

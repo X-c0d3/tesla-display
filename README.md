@@ -7,7 +7,7 @@
 - **เสียงจาก Mac ออกลำโพงรถ** และ **จอยเกมที่ต่อกับรถ** ใช้ควบคุม Mac ได้ (แปลงเป็นคีย์บอร์ด/เมาส์)
 - **WebRTC + H.264** — ภาพลื่นกว่า Guacamole/VNC มาก
 - **บน Tesla ไม่ต้องติดตั้งอะไร** แค่เปิด URL ใน browser
-- 2 เส้นทาง: **Direct Wi-Fi** (ไม่ใช้ server) หรือ **Home Server** (ผ่าน NAS ที่บ้าน ใช้ได้ทุกที่)
+- 2 เส้นทาง: **Direct Wi-Fi** (ภาพวิ่งตรงใน Wi-Fi/hotspot เดียวกัน, server แค่จับคู่) หรือ **Home Server** (ภาพผ่าน server ของคุณ ใช้ได้ทุกที่)
 - ส่งจาก **iPad / iPhone** ได้ด้วย (ดูอย่างเดียว ผ่าน Home Server)
 
 ![เขียนโค้ดบนจอ Tesla — Extend เป็นจอที่ 2 ของ MacBook](screenshot/IMG_2326.jpg)
@@ -24,7 +24,7 @@
 2. [สิ่งที่ต้องมี](#สิ่งที่ต้องมี)
 3. [ติดตั้งแอปบน Mac](#1-ติดตั้งแอปบน-mac)
 4. [หน้าแอป](#2-หน้าแอป)
-5. [ใช้แบบ Direct Wi-Fi](#3-ใช้แบบ-direct-wi-fi-ไม่ใช้-server)
+5. [ใช้แบบ Direct Wi-Fi](#3-ใช้แบบ-direct-wi-fi-ภาพวิ่งตรง-server-แค่จับคู่)
 6. [ใช้แบบ Home Server](#4-ใช้แบบ-home-server-server-ของคุณเอง-nas-ที่บ้าน--vps--oracle-cloud)
 7. [ควบคุมบน Tesla](#5-ควบคุมบน-tesla)
 8. [ส่งจาก iPad / iPhone](#6-ส่งจาก-ipad--iphone-ดูอย่างเดียว)
@@ -33,13 +33,16 @@
 
 ## ทำงานยังไง
 
-**Direct Wi-Fi** — Tesla ต่อ Wi-Fi ของ Mac แล้วคุยกับ Mac ตรง (latency ต่ำสุด ไม่กินเน็ตมือถือเรื่องภาพ)
+**Direct Wi-Fi** — Mac กับ Tesla อยู่ Wi-Fi / hotspot มือถือวงเดียวกัน ภาพวิ่งตรง Mac → รถ (latency ต่ำสุด ไม่กินเน็ตมือถือเรื่องภาพ)
 
 ```
-            Wi-Fi ของ Mac (Internet Sharing)
-Tesla browser ──https://192.168.2.1:8443──► Mac: Caddy (หน้าเว็บ) + mediamtx (ภาพ) + agent (แตะ/พิมพ์)
-              ◄══════ WebRTC ภาพ ═════════
+Tesla browser ──https://<pair server>/──► Pair server (หน้าเว็บ + จับคู่ด้วย PIN + ส่งต่อแตะ/พิมพ์) ◄──WS── Mac agent
+      ▲                                                                                              │
+      └═══════════════ WebRTC ภาพ/เสียง ตรงใน Wi-Fi วงเดียวกัน (UDP 8189) ═══════════ Mac: mediamtx ◄─┘
 ```
+
+Tesla ไม่ยอมเปิด URL ที่เป็น IP และไม่รับใบรับรอง self-signed → หน้าเว็บต้องมาจาก domain จริง (pair server)
+แต่ WebRTC ต่อไปหา IP ใน LAN ได้ จึงให้ server ทำแค่ "นัดเจอ" แล้วภาพไม่ผ่าน server เลย
 
 **Home Server** — ภาพวิ่งผ่าน NAS ที่บ้าน (Mac กับรถอยู่คนละที่ได้)
 
@@ -57,8 +60,8 @@ Mac เป็นฝ่ายต่อออกไปหา NAS เอง จึ�
 | Mac                      | macOS 15+, Apple Silicon หรือ Intel                                | เหมือนกัน                                       |
 | ffmpeg                   | `brew install ffmpeg` (เวอร์ชัน 8 ขึ้นไป)                          | เหมือนกัน                                       |
 | Xcode Command Line Tools | สำหรับ build แอป (`xcode-select --install`)                        | เหมือนกัน                                       |
-| เน็ต                     | Mac ต้องมีเน็ตจาก iPhone (USB) หรือ Ethernet เพื่อแชร์ Wi-Fi ให้รถ | Mac และรถต้องออกเน็ตได้                         |
-| Server                   | ไม่ต้องมี                                                          | NAS/เครื่องที่รัน Docker + โดเมน + port-forward |
+| เน็ต                     | Mac กับรถต่อ Wi-Fi/hotspot วงเดียวกัน และออกเน็ตได้ (โหลดหน้า + จับคู่) | Mac และรถต้องออกเน็ตได้                         |
+| Server                   | Pair server (ใช้ของคนอื่นที่เปิดให้ หรือรันเอง: container เล็กๆ ไม่ต้องเปิด UDP) | NAS/เครื่องที่รัน Docker + โดเมน + port-forward |
 
 ## 1. ติดตั้งแอปบน Mac
 
@@ -84,7 +87,7 @@ cd tesla-display
 ```
 
 `build-app.sh --install` ทำครบในคำสั่งเดียว: ปิดแอปเดิม → compile → คัดลอกไป `/Applications` → เปิดแอป
-(ครั้งแรกจะดาวน์โหลด mediamtx / Caddy พร้อมตรวจ checksum มาใส่ในแอปให้เอง)
+(ครั้งแรกจะดาวน์โหลด mediamtx พร้อมตรวจ checksum มาใส่ในแอปให้เอง — `PAIR_URL=https://…/pair ./scripts/build-app.sh` = ตั้งค่าเริ่มต้นของ Pair server)
 
 **อัปเดตเป็นเวอร์ชันล่าสุด:**
 
@@ -99,7 +102,7 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 1. **Screen &amp; System Audio Recording** → เปิด _Tesla Display_
 2. **Accessibility** → เปิด _Tesla Display_ (สำหรับรับการแตะ/พิมพ์จากรถ)
 3. **Quit แล้วเปิดแอปใหม่** — macOS ใช้สิทธิ์ใหม่หลังเปิดแอปใหม่เท่านั้น
-4. โหมด Direct Wi-Fi: ครั้งแรก macOS อาจถามให้ _caddy_ / _mediamtx_ รับการเชื่อมต่อขาเข้า → **Allow**
+4. โหมด Direct Wi-Fi: ครั้งแรก macOS อาจถามให้ _mediamtx_ รับการเชื่อมต่อขาเข้า → **Allow** (ภาพ UDP จากรถ)
 
 > build แอปใหม่ทุกครั้ง macOS จะมองเป็นแอปใหม่ (ad-hoc signature) — ถ้าส่งภาพไม่ได้หลัง build
 > ให้ลบ _Tesla Display_ ออกจากรายการสิทธิ์ทั้งสองด้วยปุ่ม **−** แล้วเพิ่มใหม่ด้วย **+**
@@ -136,15 +139,14 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 
 | ตัวเลือก                                          | ความหมาย                                                                                        |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| **Route: Direct Wi-Fi**                           | Mac เป็น server เอง ไม่ใช้ server ข้างนอก — ใช้ **PIN** (สุ่มให้, copy ได้, กด 🎲 สุ่มใหม่)     |
+| **Route: Direct Wi-Fi**                           | ภาพวิ่งตรงใน Wi-Fi วงเดียวกัน — **PIN** (≥ 6 ตัว, สุ่มให้, กด 🎲 สุ่มใหม่) = รหัสจับคู่ + PIN ควบคุม, **Pair server** = URL ที่รถเปิด |
 | **Route: Home Server**                            | ส่งผ่าน NAS — ใส่ **Server** (`https://<โดเมน>`) และ **Token** (`PUBLISH_TOKEN`, กด 👁 เพื่อดู) |
 | **Touch / keyboard / gamepad control from Tesla** | ปิดถ้าต้องการให้รถดูอย่างเดียว                                                                  |
 | **Send Mac audio to Tesla**                       | ส่งเสียงระบบของ Mac (Opus 128 kbps) ไปออกลำโพงรถ                                                |
 
 ### Open on Tesla (เฉพาะ Direct Wi-Fi)
 
-แสดง URL ที่ต้องพิมพ์บนรถสำหรับแต่ละวง network ของ Mac พร้อมปุ่ม copy และ PIN
-(Internet Sharing จะเป็น `https://192.168.2.1:8443` เสมอ)
+แสดง URL ของ Pair server ที่ต้องเปิดบนรถ และ PIN พร้อมปุ่ม copy
 
 ### แถบล่าง
 
@@ -154,25 +156,37 @@ cd tesla-display && git pull && ./scripts/build-app.sh --install
 
 แอปต่อใหม่เองทุก 3 วินาทีเมื่อเน็ตหลุด และจำค่าทั้งหมดไว้ (เปิดครั้งหน้าไม่ต้องตั้งใหม่)
 
-## 3. ใช้แบบ Direct Wi-Fi (ไม่ใช้ server)
+## 3. ใช้แบบ Direct Wi-Fi (ภาพวิ่งตรง, server แค่จับคู่)
 
-1. **Mac → System Settings &gt; General &gt; Sharing &gt; Internet Sharing**
+1. **Mac และ Tesla ต่อ Wi-Fi วงเดียวกัน** — ง่ายสุดคือ hotspot มือถือ (เปิด hotspot แล้วให้ทั้ง Mac และรถต่อ)
+   - หรือ Mac เปิด **Internet Sharing** (แชร์เน็ตจาก iPhone USB / Ethernet ออกเป็น Wi-Fi) แล้วให้รถต่อ Wi-Fi ของ Mac
+   - hotspot ต้องไม่กั้นเครื่องในวงคุยกันเอง (client isolation) และต้องออกเน็ตได้
+2. **แอป** → Route **Direct Wi-Fi** → ใส่ **Pair server** (ถ้ายังว่าง) → กด **Start**
+3. **Tesla browser** → เปิด URL ของ Pair server (จากการ์ด _Open on Tesla_) → หน้าเว็บพาเข้าเต็มจอผ่าน YouTube เอง
+4. ใส่ **PIN** → มุมซ้ายบนขึ้น `live (direct)`
 
-- _Share your connection from_: **iPhone USB** (หรือ Ethernet)
-- _To devices using_: **Wi-Fi** → ตั้งชื่อ/รหัส Wi-Fi แล้วเปิด
-- (Mac แชร์ Wi-Fi ต่อจาก Wi-Fi ด้วยกันไม่ได้)
+- ขึ้น _no Mac online with this PIN_ = PIN ผิด หรือ Mac ยังไม่กด Start (server ไม่บอกว่าแบบไหน เพื่อกันเดา PIN)
+- ขึ้น _can't reach the Mac_ = รถกับ Mac อยู่คนละวง หรือ hotspot กั้นเครื่องคุยกัน
+- ภาพ/เสียงไม่ผ่าน server แต่ **แตะ/พิมพ์ยังส่งผ่าน pair server** (หน้าเว็บ https คุยกับ Mac ใน LAN ตรงๆ ไม่ได้)
 
-2. **Tesla → Controls &gt; Wi-Fi** → ต่อ Wi-Fi ของ Mac
-3. **แอป** → Route **Direct Wi-Fi** → กด **Start**
-4. **Tesla browser** → เปิด URL จากการ์ด _Open on Tesla_ (ปกติ `https://192.168.2.1:8443`)
+### รัน Pair server เอง (ไม่บังคับ)
 
-- ครั้งแรกขึ้นหน้าเตือนใบรับรอง → **Advanced → Proceed**
-- ถ้า Tesla ไม่ยอมเปิด https แบบ self-signed ให้ลอง `http://192.168.2.1:8080`
+container แยกจาก Home Server (`/tesla/` เดิมไม่กระทบ ปิด/เปิดได้อิสระ) — รับแค่ข้อความจับคู่ + แตะ/พิมพ์ ไม่รับภาพ ไม่ต้องเปิด UDP
 
-5. ใส่ **PIN** → มุมซ้ายบนขึ้น `live (direct)`
+```bash
+git pull
+docker compose -f compose.pair.yml up -d --build      # ฟังที่พอร์ต 8090 (เปลี่ยนด้วย PAIR_PORT ใน .env)
+curl -s http://127.0.0.1:8090/ | grep -o '<html[^>]*>' # ต้องได้ <html lang="en" data-mode="pair">
+```
 
-> ทางเลือก: Mac และ Tesla ต่อ hotspot มือถือเครื่องเดียวกัน (ใช้ URL ของวงนั้นจากการ์ด _Open on Tesla_)
-> hotspot ต้องไม่กั้นเครื่องในวงคุยกันเอง
+- project แยกชื่อ `tesla-pair` — ไม่ยุ่งกับ container `tesla-display` เดิม (ใช้กับ server จริงได้เลย ไม่ต้องมี override ของ Colima)
+- ให้ nginx ส่ง `https://<โดเมน>/pair/` → `http://<เครื่องนี้>:8090/` (ตัวอย่างใน `nginx/tesla-display-prefix.conf`)
+  nginx ใน docker → ใช้ IP ของ server แทน `127.0.0.1` ใน `proxy_pass` (แบบเดียวกับ `/tesla/`) แล้ว `nginx -t` + reload
+- ทดสอบ: เปิด `https://<โดเมน>/pair/?fs=1` → ต้องขึ้นช่องใส่ PIN · ในแอปตั้ง **Pair server** = `https://<โดเมน>/pair`
+- ไม่ต้องเปิด UDP และไม่ต้องเปิดพอร์ต 8090 สู่อินเทอร์เน็ต (ขอแค่ nginx เข้าถึงได้)
+- อัปเดต: `git pull` แล้วรันคำสั่ง `up -d --build` ข้างบนซ้ำ (หน้าเว็บกับ `relay/pair.py` ฝังอยู่ใน image)
+- ดู log: `docker compose -f compose.pair.yml logs -f`
+- ปิดให้คนอื่นใช้ = ลบ location `/pair/` ออกจาก nginx หรือ `docker compose -f compose.pair.yml down`
 
 ## 4. ใช้แบบ Home Server (server ของคุณเอง: NAS ที่บ้าน / VPS / Oracle Cloud)
 
@@ -402,7 +416,7 @@ browser ปกติของ Tesla ซ่อนแถบ URL ไม่ได้
 - ✅ ทดสอบแล้วบน **Model Y Juniper 2025** (พฤศจิกายน 2026): พื้นที่หน้าเว็บ 1920x1140 @1x (browser ปกติ 1922x1080 @1.53x)
 - ⚠️ **ไม่ใช่ฟีเจอร์ทางการของ Tesla** — Tesla อาจปิดทริกนี้ในซอฟต์แวร์เวอร์ชันหลังๆ
 - ใน Theater อาจต้องใส่ PIN ใหม่ และต้องลองว่าแตะ/คีย์บอร์ดบนจอใช้ได้เหมือน browser ปกติ
-- Direct Wi-Fi (`https://192.168.2.1:8443`) ใช้ทริกนี้ได้หรือไม่ ขึ้นกับว่า Theater ยอมเปิด https แบบ self-signed — ยังไม่ได้ทดสอบ
+- Direct Wi-Fi ใช้ทริกเดียวกัน (หน้าเว็บมาจาก Pair server ซึ่งเป็น domain จริง)
 
 ### จอยเกม
 
@@ -486,9 +500,12 @@ iPad / iPhone (Larix Screencaster) ──WHIP──► NAS (Tesla Display server
 
 **Direct Wi-Fi**
 
-- ต้องใส่ PIN ทั้งดูภาพและควบคุม (ใส่ผิดหน่วง 2 วินาที)
-- คนในวงเดียวกันส่งภาพปลอมเข้ามาไม่ได้ (`/screen/whip` ปิดจากภายนอก และ API ของ mediamtx ฟังเฉพาะ 127.0.0.1)
-- ใบรับรองเป็น self-signed — ใช้ในวง Wi-Fi ของ Mac เอง
+- PIN = รหัสจับคู่ ต้องใส่ทั้งดูภาพและควบคุม (อย่างน้อย 6 ตัว) — pair server จำกัดการลอง PIN ที่ไม่มี Mac ออนไลน์
+  30 ครั้ง / 10 นาที / IP
+- ภาพวิ่งตรงใน LAN: คนนอกวงดูภาพไม่ได้แม้รู้ PIN — แต่ **แตะ/พิมพ์ผ่าน pair server** ใครได้ PIN ไปควบคุม Mac ได้จากทุกที่
+  ขณะที่แอปกด Start อยู่ → ใช้ PIN ที่เดายาก (สุ่มใหม่ด้วย 🎲 หรือตั้งเองให้ยาวขึ้น)
+- คนในวงเดียวกันส่งภาพปลอมเข้ามาไม่ได้ (HTTP ของ mediamtx ฟังเฉพาะ 127.0.0.1)
+- เจ้าของ pair server เห็นข้อความจับคู่ (มี IP ใน LAN ของ Mac) และการแตะ/พิมพ์ — ใช้ pair server ที่ไว้ใจ หรือรันเอง
 
 **Home Server**
 

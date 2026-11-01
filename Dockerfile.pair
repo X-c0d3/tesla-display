@@ -1,0 +1,8 @@
+# Pairing server สำหรับ Direct Wi-Fi — แยกจาก server หลัก (/tesla/) ปิด/เปิดได้อิสระ
+#   docker compose -f compose.pair.yml up -d --build
+FROM python:3.12-alpine
+RUN pip install --no-cache-dir websockets==13.1
+COPY relay/pair.py /opt/tesla-display/pair.py
+COPY web/index.html /srv/index.html
+EXPOSE 8090
+CMD ["python", "-u", "/opt/tesla-display/pair.py"]

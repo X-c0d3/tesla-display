@@ -8,9 +8,11 @@ Video is H.264 over WebRTC; touch/keyboard/gamepad from the car control the Mac;
 Nothing is installed on the Tesla — it only opens a URL.
 
 Two routes (selectable in the app):
-- **Direct Wi-Fi** — the Mac is the whole server (bundled Caddy + mediamtx + input agent). Tesla joins the Mac's
-  Wi-Fi (Internet Sharing, Mac IP is always `192.168.2.1`) and opens `https://<mac-ip>:8443` (self-signed) or
-  `http://<mac-ip>:8080`. PIN-protected. No outside server.
+- **Direct Wi-Fi** — Mac and Tesla on the same Wi-Fi / phone hotspot. Tesla opens a **pair server** (public domain,
+  `relay/pair.py`, separate container) and enters the PIN; the PIN is the room. The viewer sends its WebRTC offer over
+  the pair WebSocket → Mac agent (`PAIR=1`) POSTs it to the bundled mediamtx on 127.0.0.1:8889 → answer (host
+  candidates = Mac LAN IPs, UDP 8189) goes back → video/audio flow directly Mac → Tesla. Touch/keyboard still go
+  through the pair server (an https page can't reach a LAN IP by HTTP/WS). The pair server never carries video.
 - **Home Server** — Mac publishes via WHIP to a Docker stack on the user's NAS (Caddy + mediamtx + Python relay);
   Tesla opens `https://<DOMAIN>`. Works when Mac and car are on different networks.
 
@@ -23,19 +25,25 @@ app/TeslaDisplay.xcodeproj Xcode project for SwiftUI PREVIEW ONLY (target TeslaD
                            local.tesla-screenshare.preview) — references the same TeslaDisplay.swift; the real
                            app is still built by scripts/build-app.sh. Preview = `ContentView_Previews` (#if DEBUG)
 app/make-icon.swift        renders the app icon PNG at build time
-scripts/build-app.sh       builds build/Tesla Display.app; downloads + checksum-verifies mediamtx & Caddy
+scripts/build-app.sh       builds build/Tesla Display.app; downloads + checksum-verifies mediamtx
                            into .cache/; ad-hoc codesigns. Env: UNIVERSAL=1 (arm64+x86_64 via lipo), VERSION.
-                           App defaults are hardcoded: Route Direct Wi-Fi, Server https://screen.example.com
+                           App defaults are hardcoded: Route Direct Wi-Fi, Server https://screen.example.com;
+                           env PAIR_URL -> Info.plist TDPairURL = default Pair server (keeps the domain out of git)
 .github/workflows/release-app.yml  push branch release/<version> → universal build on macos-15 → tag
                            v<version> + GitHub Release (zip + SHA256SUMS); re-push = rebuild, moves tag,
                            --clobber assets. workflow_dispatch = artifacts only. No repo variables/secrets needed.
 scripts/mac-capture.swift  ScreenCaptureKit capture → raw NV12 on stdout (+ optional f32le stereo audio to a FIFO)
 scripts/mac-input-agent.swift  injects input via CGEvent. Modes: relay client (Home Server) or local
-                           WebSocket server on 127.0.0.1 (Direct Wi-Fi, env LOCAL_LISTEN/LOCAL_PIN)
+                           client with PAIR=1 (Direct Wi-Fi: SCREEN_URL = pair server, TOKEN = PIN; answers
+                           {"t":"offer"} via LOCAL_WHEP, default http://127.0.0.1:8889/screen/whep)
 dev/mac-publish.sh         CLI equivalent of the app's publish pipeline (mac-capture | ffmpeg → WHIP)
 dev/tesla-local-test.sh    serves a diagnostics page (http/https, WebRTC, WebGL, HW decode, screen size)
 web/index.html             the viewer the Tesla loads (both routes). WHEP + WebSocket input + audio + gamepad
 relay/relay.py             Home Server WebSocket relay (viewer ↔ Mac agent), Python websockets 13.1
+relay/pair.py              Direct Wi-Fi pair server: serves web/index.html with data-mode="pair" + rooms keyed by PIN
+                           (/input/agent, /input/viewer; same first message {"auth": PIN}); limits empty-room joins
+                           per IP (X-Forwarded-For last hop). Dockerfile.pair + compose.pair.yml (project tesla-pair,
+                           port 8090), nginx example location /pair/ in nginx/tesla-display-prefix.conf
 Dockerfile, docker/entrypoint.sh  ONE image/container for the server: mediamtx + Caddy + relay, all on
                            127.0.0.1 inside; entrypoint prefixes logs ([caddy]/[mediamtx]/[relay]) and exits if
                            any service dies (compose restarts it). Env: DOMAIN, PUBLISH_TOKEN, CONTROL_PIN,
@@ -78,9 +86,11 @@ There is no unit-test suite; verify end to end:
 - publish with `dev/mac-publish.sh <display>` (your process needs Screen Recording permission),
 - open the viewer in a browser, then read `pc.getStats()` (inbound-rtp video fps/frames dropped, audio
   `totalAudioEnergy` while running `say …` on the Mac),
-- for Direct Wi-Fi, run the bundled `mediamtx`, `caddy` and agent (`LOCAL_LISTEN=8766 LOCAL_PIN=…`) by hand
-  from `build/Tesla Display.app/Contents/Resources` and probe with curl (whip from LAN must be 403,
-  whep without PIN 401).
+- for Direct Wi-Fi, run by hand: mediamtx (`.cache/mediamtx-*/mediamtx` with the app's mediamtx-local.yml settings),
+  `WEB_DIR=web PAIR_LISTEN=127.0.0.1 python relay/pair.py` (venv with websockets 13.1), a test publisher
+  (`ffmpeg -re -f lavfi -i testsrc2=… -c:v libx264 -tune zerolatency -bf 0 … -f whip http://127.0.0.1:8889/screen/whip`),
+  the agent (`PAIR=1 SCREEN_URL=http://127.0.0.1:8090 TOKEN=<pin> CONTROL=0`), then open
+  `http://127.0.0.1:8090/?fs=1`, enter the PIN and expect status `live (direct)` + a host candidate on UDP 8189.
 Don't post real input events while testing (pad/click messages move the user's real cursor/keys).
 
 ## Hard-won facts (don't re-learn these)
@@ -116,12 +126,13 @@ Don't post real input events while testing (pad/click messages move the user's r
   "Auto" can resize later via `apply(settings)`. Fixed `serialNum` so macOS remembers the arrangement.
 - **TCC:** every rebuild is a new ad-hoc signature → macOS asks for Screen Recording/Accessibility again; after
   granting, the app must be **quit and reopened**. The app stops retrying when capture logs a TCC denial.
-- **Tesla browser:** won't open raw-IP/plain-http on the internet route (needs a domain + HTTPS); must be parked
+- **Tesla browser:** won't open raw-IP URLs or accept self-signed certs (needs a domain + real HTTPS); must be parked
   (no video while driving); audio needs a user tap (autoplay policy); WebSockets drop often → viewer reconnects.
-  Direct Wi-Fi is **on hold**: on the car (Juniper 2025, home Wi-Fi, same /24 as the Mac) both
-  `https://192.168.137.166:8443` and `http://…:8080` gave ERR_CONNECTION_REFUSED while the Mac served them fine and
-  saw no incoming connection → the car refuses before reaching the Mac (raw-IP URL, non-standard port, or LAN block —
-  not narrowed down; self-signed cert never got tested). User does not want external DNS helpers (sslip.io/nip.io).
+  On the car (Juniper 2025) `https://<LAN-IP>:8443` and `http://<LAN-IP>:8080` gave ERR_CONNECTION_REFUSED with no
+  connection reaching the Mac → the old Direct Wi-Fi (Mac-served page + bundled Caddy) was removed. Current Direct
+  Wi-Fi = page from a public pair server, WebRTC media straight to the Mac's LAN IP (WebRTC to LAN IPs is not blocked;
+  same model as sidedisplay.co). User does not want external DNS helpers (sslip.io/nip.io) and does not want the
+  personal `/tesla/` server shared — the pair server is a separate container/path. Not yet verified on the car.
   Full screen without the URL bar works via Theater → YouTube → `youtube.com/redirect?q=<viewer URL>` (verified on
   Model Y Juniper 2025): viewport 1920x1140 @1x there vs 1922x1080 @1.53x in the normal browser.
   `/` auto-redirects every device through `youtube.com/redirect?q=<viewer>?fs=1` unless `?fs` is present (loop guard +
@@ -133,8 +144,8 @@ Don't post real input events while testing (pad/click messages move the user's r
 - macOS has no virtual-gamepad API without a restricted entitlement → gamepad is mapped to keyboard/mouse
   (mapping table in `mac-input-agent.swift`, documented in README).
 - Caddy (Home Server) guards `/screen/whip` with `Authorization: Bearer <PUBLISH_TOKEN>` or `?token=`; WHEP is
-  open (viewing needs no PIN on Home Server — known gap). Local Caddy blocks `/screen/whip*` (403) and requires
-  `Authorization: Bearer <PIN>` for `/screen/*`.
+  open (viewing needs no PIN on Home Server — known gap). Direct Wi-Fi: mediamtx HTTP listens on 127.0.0.1 only;
+  pair server answers "ok, online:false" for a wrong PIN (same as Mac offline) so PINs can't be probed cheaply.
 
 ## Conventions
 - **All user-facing strings in English** (app UI, status, viewer page, CLI log lines). Code comments are Thai —
@@ -146,10 +157,11 @@ Don't post real input events while testing (pad/click messages move the user's r
   `<server>/screen/whip`, `<server>/input/agent`) so the stack works under a path prefix — keep it that way.
 - Keep the server **docker-compose only**. The user explicitly does not want Cloudflare Tunnel/cloudflared or
   Proxmox/LXC setup scripts; they port-forward themselves.
-- Pin image/binary versions (mediamtx v1.11.3, caddy 2.8.4, python:3.12-alpine + websockets 13.1).
+- Pin image/binary versions (mediamtx v1.11.3, caddy 2.8.4 (server image only), python:3.12-alpine + websockets 13.1).
   Verify checksums for downloads.
 - `web/`, `relay/`, `Caddyfile`, `mediamtx.yml` are BAKED INTO the image → any change needs
   `docker compose … up -d --build` (no live-mounted files any more). Server update = `git pull` + rebuild.
+  `web/index.html` + `relay/pair.py` are also baked into the pair image → `docker compose -f compose.pair.yml up -d --build`.
 - BusyBox userland in the image (python:3.12-alpine): no `sed -u`, no `wait -n` — keep entrypoint POSIX sh.
 - After changing anything the app bundles (`app/`, `scripts/mac-*.swift`, `web/`), rebuild with
   `scripts/build-app.sh` and tell the user to recopy to `/Applications` and re-grant permissions.
