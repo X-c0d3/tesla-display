@@ -6,8 +6,9 @@
 <title>Tesla Display</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  /* ยืดภาพเต็มหน้าต่าง browser เสมอ (ไม่มีขอบดำ) — Extend + Resolution Auto สัดส่วนตรงอยู่แล้วจึงไม่เพี้ยน */
-  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: fill; background: #000; touch-action: none; user-select: none; -webkit-user-select: none; }
+  /* รักษาสัดส่วนภาพ (contain) — Extend + Resolution Auto ขนาดตรงกับหน้าจออยู่แล้วจึงเต็มจอไม่มีขอบดำ
+     ต่างกันไม่เกิน 3% (เช่น ช่วงที่ Auto ยังไม่ปรับ) ยืดให้เต็ม (fill) ดีกว่ามีขอบดำบางๆ */
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; touch-action: none; user-select: none; -webkit-user-select: none; }
   #status { position: fixed; top: 12px; left: 12px; color: #aaa; font: 14px system-ui, sans-serif; transition: opacity .5s; pointer-events: none; }
   #status.hide { opacity: 0; }
   #bar { position: fixed; right: 12px; bottom: 12px; max-width: calc(100% - 24px); display: flex; flex-wrap: wrap;
@@ -233,11 +234,28 @@ function send(o) {
   if (wsReady && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o));
 }
 
-// แปลงตำแหน่งบนจอ Tesla -> 0..1 ของภาพ (object-fit: fill = ภาพเต็มกรอบ video พอดี)
+// เลือกวิธีวางภาพตามสัดส่วน: ใกล้เคียงหน้าจอ = fill, ต่างมาก (เช่น Mirror จอ Mac) = contain ไม่บิดเบี้ยว
+function fitVideo() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const diff = Math.abs((vw / vh) / (innerWidth / innerHeight) - 1);
+  video.style.objectFit = diff <= 0.03 ? 'fill' : 'contain';
+}
+video.addEventListener('resize', fitVideo); // ขนาดภาพเปลี่ยน (เช่น Auto ปรับจอเสมือน)
+addEventListener('resize', fitVideo);
+
+// แปลงตำแหน่งบนจอ Tesla -> 0..1 ของภาพจริง (contain: ตัดขอบดำออก / fill: เต็มกรอบพอดี)
 function norm(ev) {
   const r = video.getBoundingClientRect();
+  let w = r.width, h = r.height;
+  if (video.style.objectFit !== 'fill') {
+    const s = Math.min(r.width / (video.videoWidth || 16), r.height / (video.videoHeight || 10));
+    w = (video.videoWidth || 16) * s;
+    h = (video.videoHeight || 10) * s;
+  }
+  const ox = r.left + (r.width - w) / 2, oy = r.top + (r.height - h) / 2;
   const c = (n) => Math.min(1, Math.max(0, n));
-  return { x: c((ev.clientX - r.left) / r.width), y: c((ev.clientY - r.top) / r.height) };
+  return { x: c((ev.clientX - ox) / w), y: c((ev.clientY - oy) / h) };
 }
 
 // touch: แตะ = click, แตะค้าง = right click, ลาก = drag, สองนิ้ว = scroll

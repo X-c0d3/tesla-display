@@ -24,7 +24,7 @@
 	handle {
 		header Cache-Control no-store
 		root * /srv
-		try_files {path} /index.html
+		try_files {path} {path}.html /index.html
 		file_server
 	}
 }

@@ -109,6 +109,8 @@ Don't post real input events while testing (pad/click messages move the user's r
 - **Tesla browser:** won't open raw-IP/plain-http on the internet route (needs a domain + HTTPS); must be parked
   (no video while driving); audio needs a user tap (autoplay policy); WebSockets drop often → viewer reconnects.
   Whether it accepts self-signed https / http on a LAN IP (Direct Wi-Fi) is **not yet verified on the car**.
+  Full screen without the URL bar works via Theater → YouTube → `youtube.com/redirect?q=<viewer URL>` (verified on
+  Model Y Juniper 2025): viewport 1920x1140 @1x there vs 1922x1080 @1.53x in the normal browser.
 - **Colima** forwards only TCP unless started with `colima start --network-address` (address 192.168.64.2).
   The user's other container `acc-nginx` owns ports 443 and 8089 → local override uses 8088.
 - macOS has no virtual-gamepad API without a restricted entitlement → gamepad is mapped to keyboard/mouse

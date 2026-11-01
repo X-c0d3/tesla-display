@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tesla Display — full screen</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 20px system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; text-align: center; padding: 0 24px; }
+  a { color: #fff; background: #2a6fdb; padding: 14px 24px; border-radius: 12px; text-decoration: none; }
+  small { color: #888; font-size: 15px; }
+</style>
+</head>
+<body>
+<!-- เปิดหน้าเว็บผ่าน youtube.com/redirect -> ใน Theater → YouTube จะได้หน้าเต็มจอไม่มีแถบ URL
+     หน้านี้แยกจาก index.html เพราะ YouTube พากลับมาที่หน้าหลัก (ถ้าหน้าหลัก redirect เองจะวนไม่จบ) -->
+<div>Opening Tesla Display in full screen…</div>
+<a id="go" href="#">Open full screen</a>
+<small>Works when opened from Theater → YouTube. In the normal browser the URL bar stays.</small>
+<script>
+  // URL ของหน้า viewer = โฟลเดอร์เดียวกับหน้านี้ (ใช้ได้ทั้งแบบมี prefix เช่น /tesla/ และไม่มี)
+  const viewer = new URL('./', location.href).href;
+  const target = 'https://www.youtube.com/redirect?q=' + encodeURIComponent(viewer);
+  document.getElementById('go').href = target;
+  location.replace(target);
+</script>
+</body>
+</html>

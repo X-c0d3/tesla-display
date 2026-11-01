@@ -425,7 +425,7 @@ final class Controller: ObservableObject {
         \thandle {
         \t\theader Cache-Control no-store
         \t\troot * "\(web)"
-        \t\ttry_files {path} /index.html
+        \t\ttry_files {path} {path}.html /index.html
         \t\tfile_server
         \t}
         }
