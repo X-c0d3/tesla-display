@@ -21,7 +21,10 @@
   #kb.show { left: 50%; bottom: 72px; transform: translateX(-50%); width: min(70vw, 720px); height: 48px; opacity: 1;
              padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,.25); background: rgba(20,20,22,.92);
              color: #fff; font: 18px system-ui, sans-serif; caret-color: #4f8cff; outline: none; overflow: hidden; }
-  #kb.show::placeholder { color: #888; }
+  /* ช่องพิมพ์ว่างเสมอ (ส่งทีละตัวแล้วล้าง) -> placeholder ไม่ขึ้น จึงใช้ป้ายแยก */
+  #kbHint { display: none; position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%);
+            color: #888; font: 15px system-ui, sans-serif; pointer-events: none; }
+  #kb.show + #kbHint { display: block; }
   #bar button svg { display: block; margin: auto; }
   #pin { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.8); }
   #pin.show { display: flex; }
@@ -33,7 +36,9 @@
 <video id="v" autoplay muted playsinline></video>
 <div id="status">connecting…</div>
 <div id="stats"></div>
-<textarea id="kb" rows="1" placeholder="Type here — keys go to the Mac" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+<textarea id="kb" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
+          data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false"></textarea>
+<div id="kbHint">Typing goes to the Mac</div>
 <div id="bar">
   <button data-mod="cmd">⌘</button>
   <button data-mod="alt">⌥</button>
@@ -375,7 +380,7 @@ setInterval(async () => {
 }, 1000);
 
 // ---------- audio ----------
-// browser เล่นเสียงได้หลังผู้ใช้แตะจอครั้งแรกเท่านั้น -> แตะครั้งแรกเปิดเสียงให้อัตโนมัติ
+// ปิดเสียงเป็นค่าเริ่มต้นเสมอ -> เปิดเองด้วยปุ่มลำโพง (กดปุ่ม = user gesture จึงเล่นเสียงได้)
 const sndBtn = document.getElementById('sndBtn');
 const ICON_SOUND_ON = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></svg>';
 const ICON_SOUND_OFF = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9.5l5 5M22 9.5l-5 5"/></svg>';
@@ -387,11 +392,6 @@ function setMuted(m) {
 sndBtn.innerHTML = video.muted ? ICON_SOUND_OFF : ICON_SOUND_ON;
 sndBtn.addEventListener('pointerdown', (e) => e.preventDefault());
 sndBtn.addEventListener('click', () => setMuted(!video.muted));
-document.addEventListener('pointerdown', function unmuteOnce(e) {
-  if (e.target === sndBtn) return;
-  document.removeEventListener('pointerdown', unmuteOnce, true);
-  setMuted(false);
-}, true);
 
 // ---------- gamepad ----------
 // อ่านจอยที่ต่อกับรถ (USB/Bluetooth) แล้วส่งสถานะไปที่ Mac (Mac แปลงเป็นคีย์บอร์ด/เมาส์)

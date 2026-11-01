@@ -336,7 +336,7 @@ docker compose start
 | esc ⇥ | Escape, Tab |
 | ⛶ | fullscreen |
 | 📊 | เปิด/ปิดแผงสถิติ realtime มุมขวาบน: FPS, ความละเอียด, bitrate, packet loss, jitter buffer, RTT (ปิดเป็นค่าเริ่มต้น, จำค่าไว้ในรถ) |
-| 🔊 / 🔇 | เปิด/ปิดเสียง (แตะจอครั้งแรกจะเปิดเสียงให้อัตโนมัติ — browser บล็อกเสียงจนกว่าจะแตะ) |
+| 🔊 / 🔇 | เปิด/ปิดเสียง (ปิดเสียงเป็นค่าเริ่มต้นทุกครั้งที่เปิดหน้าเว็บ — กดปุ่มนี้เพื่อเปิด) |
 
 ### จอยเกม
 ต่อจอย USB / Bluetooth เข้ากับรถ หน้าเว็บจะขึ้น `🎮 … connected` แล้วส่งปุ่มไปที่ Mac
@@ -441,7 +441,7 @@ iPad / iPhone (Larix Screencaster) ──WHIP──► NAS (Tesla Display server
 | `Could not create virtual display` | ใช้ Mode **Mirror** แทน (API จอเสมือนอาจเปลี่ยนหลังอัปเดต macOS) |
 | `ffmpeg not found` | `brew install ffmpeg` |
 | Tesla ขึ้น `Enter the PIN to view` / `wrong PIN` | ใส่ PIN ให้ตรงกับในแอป (Direct) หรือ `CONTROL_PIN` (Home Server) |
-| ไม่มีเสียงบนรถ | แตะจอ 1 ครั้ง หรือกด 🔇 → 🔊; เช็กว่าเปิด *Send Mac audio to Tesla* และเสียง Mac ไม่ได้ mute |
+| ไม่มีเสียงบนรถ | หน้าเว็บปิดเสียงไว้เป็นค่าเริ่มต้น — กดปุ่มลำโพง (🔇 → 🔊); เช็กว่าเปิด *Send Mac audio to Tesla* และเสียง Mac ไม่ได้ mute |
 | จอยไม่ทำงาน | กดปุ่มบนจอย 1 ครั้งให้ browser เห็น (ขึ้น `🎮 connected`); ต้องใส่ PIN (View only ส่งจอยไม่ได้) |
 | Tesla ค้างที่ `waiting for video…` | รถไปไม่ถึง UDP ของ Mac/server: เช็ก Wi-Fi วงเดียวกัน, macOS Firewall (Direct) หรือ UDP 8189 port-forward (Home Server) |
 | Tesla ขึ้น `WHEP 404` | Mac ยังไม่ได้ส่งภาพ (กด Start / ดู Log) |
