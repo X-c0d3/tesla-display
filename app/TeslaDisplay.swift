@@ -178,7 +178,7 @@ final class Controller: ObservableObject {
         return display.displayID
     }
 
-    // หน้าเว็บบน Tesla รายงานขนาดจอ (CSS px) -> Auto: ปรับจอเสมือนให้เท่านั้น แล้วเริ่มจับภาพใหม่
+    // หน้าเว็บบน Tesla รายงานพื้นที่แสดงผลเป็นพิกเซลจริง -> Auto: ปรับจอเสมือนให้เท่านั้น แล้วเริ่มจับภาพใหม่
     private func viewerScreen(width: Int, height: Int, dpr: Double) {
         teslaScreen = "\(width)x\(height) @\(dpr == dpr.rounded() ? String(Int(dpr)) : String(format: "%.2f", dpr))x"
         guard running, autoSize, let display = virtualDisplay else { return }

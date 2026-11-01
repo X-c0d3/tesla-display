@@ -201,11 +201,12 @@ function connectInput() {
   };
 }
 
-// บอก Mac ว่าพื้นที่แสดงผลบน Tesla ใหญ่แค่ไหน (CSS px + devicePixelRatio) เพื่อให้ Resolution: Auto ปรับจอเสมือนให้พอดี
+// บอก Mac ว่าพื้นที่แสดงผลบน Tesla ใหญ่แค่ไหน เป็นพิกเซลจริง (CSS px x devicePixelRatio)
+// เพื่อให้ Resolution: Auto สร้างจอเสมือนขนาดเท่าพิกเซลจริง -> ภาพ 1:1 ไม่ถูกขยาย (ถ้าส่ง CSS px แล้ว dpr > 1 ภาพจะเบลอ)
 // ใช้ขนาดหน้าต่าง browser (ไม่รวมแถบ URL) ไม่ใช่ screen.* ทั้งจอ — ไม่งั้นสัดส่วนไม่ตรงแล้วมีขอบดำซ้าย/ขวา
 function reportScreen() {
   const dpr = window.devicePixelRatio || 1;
-  send({ t: 'screen', w: innerWidth, h: innerHeight, dpr, sw: screen.width, sh: screen.height });
+  send({ t: 'screen', w: Math.round(innerWidth * dpr), h: Math.round(innerHeight * dpr), dpr, sw: screen.width, sh: screen.height });
 }
 // เข้า/ออก full screen หรือหมุนจอ -> รายงานขนาดใหม่ (ข้ามตอนคีย์บอร์ดบนจอเปิด เพราะมันบังหน้าจอชั่วคราว)
 let resizeTimer = null;
@@ -380,7 +381,8 @@ setInterval(async () => {
     'lost/s    ' + Math.max(0, lost) + '   dropped ' + (v.framesDropped ?? 0),
     'jitterbuf ' + (jb ?? '-') + ' ms',
     'RTT       ' + (rtt != null ? Math.round(rtt * 1000) + ' ms' : '-'),
-    'view      ' + innerWidth + 'x' + innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x',
+    'view      ' + innerWidth + 'x' + innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x  = ' +
+      Math.round(innerWidth * (window.devicePixelRatio || 1)) + 'x' + Math.round(innerHeight * (window.devicePixelRatio || 1)) + ' px',
     'route     ' + agentMode + (a ? '   audio ✓' : ''),
   ].join('\n');
 }, 1000);
