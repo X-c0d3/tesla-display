@@ -42,6 +42,20 @@ struct PublishSettings {
     var pin: String  // โหมด local: PIN ที่ Tesla ต้องใส่เพื่อดู/ควบคุม
     var audio = true         // ส่งเสียงระบบไปพร้อมภาพ (Opus)
     var virtualSize = "auto" // Extend: ขนาดจอเสมือน (= พื้นที่ทำงาน) หรือ "auto" = ตามจอ Tesla ที่เปิดหน้าเว็บ
+    var priority = "latency" // "latency" / "balanced" / "quality" — ดู encoderTuning()
+}
+
+// Priority -> x264 preset + ขนาด VBV (bufsize = bitrate / bufDivisor วินาที)
+// สิ่งที่มีผลกับ delay จริงคือขนาด keyframe ไม่ใช่ความเร็ว encode: วัดที่ 1920x1140@60 8 Mbps
+//   ultrafast 1.0 / superfast 1.3 / veryfast 1.7 / faster 2.6 ms ต่อเฟรม (ต่างกันไม่ถึง 2 ms)
+//   แต่ ultrafast ภาพแย่ลงชัด (SSIM 0.868 vs 0.895) จึงไม่ใช้
+//   keyframe ใหญ่สุด: bitrate/8 = 120 KB, bitrate/2 = 260 KB (upload 30 Mbps ≈ 32 vs 70 ms ต่อครั้ง)
+func encoderTuning(_ priority: String) -> (preset: String, bufDivisor: Int) {
+    switch priority {
+    case "quality": return ("faster", 2)
+    case "balanced": return ("veryfast", 4)
+    default: return ("superfast", 8)
+    }
 }
 
 // IPv4 ของ Mac ทุก interface (ไว้แสดง URL ให้พิมพ์บน Tesla) — Internet Sharing (192.168.2.x) ขึ้นก่อน
@@ -258,6 +272,7 @@ final class Controller: ObservableObject {
             audioMap = ["-map", "0:v", "-map", "1:a", "-c:a", "libopus", "-b:a", "128k", "-ar", "48000"]
         }
 
+        let tune = encoderTuning(s.priority)
         let ff = Process()
         ff.executableURL = URL(fileURLWithPath: ffmpegPath)
         ff.arguments = [
@@ -268,12 +283,10 @@ final class Controller: ObservableObject {
         ] + audioArgs + audioMap + [
             // libx264 zerolatency: POC type 2 (ไม่มีการสลับลำดับเฟรม) — h264_videotoolbox ใช้ POC type 0
             // ซึ่งพอมี packet loss แล้ว mediamtx เข้าใจผิดว่ามี B-frames แล้วตัดคนดู
-            // latency: keyframe ก้อนใหญ่ใช้เวลาส่งหลายสิบ ms -> รถต้องตั้ง jitter buffer เผื่อ
-            //   bufsize 1/8 วินาที = จำกัดขนาด keyframe, -g 2 วินาที = keyframe ห่างขึ้น,
-            //   -sc_threshold 0 = ไม่แทรก keyframe ตอนสลับหน้าต่าง (จอเปลี่ยนเยอะ)
-            "-c:v", "libx264", "-preset", s.fps > 30 ? "superfast" : "veryfast", "-tune", "zerolatency",
+            // -g 2 วินาที = keyframe ห่างขึ้น, -sc_threshold 0 = ไม่แทรก keyframe ตอนสลับหน้าต่าง
+            "-c:v", "libx264", "-preset", tune.preset, "-tune", "zerolatency",
             "-profile:v", "main", "-bf", "0", "-g", "\(s.fps * 2)", "-sc_threshold", "0",
-            "-b:v", "\(s.bitrate)M", "-maxrate", "\(s.bitrate)M", "-bufsize", "\(s.bitrate * 1000 / 8)k",
+            "-b:v", "\(s.bitrate)M", "-maxrate", "\(s.bitrate)M", "-bufsize", "\(s.bitrate * 1000 / tune.bufDivisor)k",
             "-f", "whip", "-authorization", s.token, whip,
         ]
 
@@ -656,6 +669,7 @@ struct ContentView: View {
     @AppStorage("size") private var size = "1920x1200"
     @AppStorage("fps") private var fps = 30
     @AppStorage("bitrate") private var bitrate = 8
+    @AppStorage("priority") private var priority = "latency"
     @AppStorage("control") private var control = true
     @AppStorage("audio") private var audio = true
     @AppStorage("showStats") private var showStats = false  // แสดง fps / bitrate ที่กำลังส่ง (ปิดเป็นค่าเริ่มต้น)
@@ -668,6 +682,8 @@ struct ContentView: View {
     @State private var display = 0
     @State private var showLog = false
     @State private var showToken = false
+    @State private var contentHeight: CGFloat = 0   // ความสูงจริงของส่วนตั้งค่า (ไว้ปรับความสูงหน้าต่างตอนสลับ Route)
+    @State private var viewportHeight: CGFloat = 0  // ความสูงที่ ScrollView มองเห็นอยู่
     static let logWidth: CGFloat = 440
 
     private var statusColor: Color {
@@ -748,6 +764,15 @@ struct ContentView: View {
                         GridRow {
                             label("Bitrate")
                             Stepper("\(bitrate) Mbps", value: $bitrate, in: 2...20).monospacedDigit()
+                        }
+                        GridRow {
+                            label("Priority")
+                            Picker("", selection: $priority) {
+                                Text("Latency").tag("latency")
+                                Text("Balanced").tag("balanced")
+                                Text("Quality").tag("quality")
+                            }.labelsHidden().pickerStyle(.segmented).fixedSize()
+                            .help("Latency: small keyframes, lowest delay · Quality: sharper, bigger keyframes can add delay on slow uploads")
                         }
                     }
                     .disabled(c.running) // สลับ Mode ได้ระหว่างส่งภาพ ส่วนค่าอื่นต้อง Stop ก่อน
@@ -832,22 +857,23 @@ struct ContentView: View {
         .padding(.top, 2)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         }
         .scrollIndicators(.automatic)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
 
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 PulseDot(color: statusColor, active: c.running)
                 Text(c.status).font(.callout.weight(.medium)).foregroundStyle(.white.opacity(0.8)).lineLimit(2)
+                Spacer(minLength: 8) // ดัน FPS ไปชิดขวา
                 if showStats, c.running, let stats = c.sendStats {
-                    Spacer(minLength: 8)
                     Text(stats)
                         .font(.system(.callout, design: .monospaced).weight(.semibold))
                         .monospacedDigit()
                         .foregroundStyle(statusColor)
                         .help("FPS / bitrate ที่ Mac กำลังส่ง (อัปเดตทุก 1 วินาที)")
                 }
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -912,6 +938,9 @@ struct ContentView: View {
             // จำจอที่เลือกทันที (เก็บเป็นชื่อจอ เพราะเลขจอเปลี่ยนได้เมื่อเสียบ/ถอดจอ)
             if let name = c.displays.first(where: { $0.index == display })?.name { displayName = name }
         }
+        // เนื้อหาสูงขึ้น/เตี้ยลง (สลับ Route/Mode, การ์ด Open on Tesla โผล่, เปิดแอปมาในโหมดที่เนื้อหายาว)
+        // -> ปรับความสูงหน้าต่าง; ปรับความสูงหน้าต่างไม่ทำให้เนื้อหาเปลี่ยน จึงไม่วน
+        .onChange(of: contentHeight) { fitHeight() }
         .onChange(of: extend) {
             // สลับ Extend/Mirror ระหว่างส่งภาพ -> หยุดแล้วเริ่มใหม่ด้วยโหมดใหม่
             guard c.running else { return }
@@ -934,7 +963,7 @@ struct ContentView: View {
                                 // Auto: จอเสมือน = พิกเซลจริงของรถอยู่แล้ว (เช่น 1922x1080) -> ส่ง 1:1 ห้ามย่อ ไม่งั้นเบลอ
                                 size: extend ? (virtualSize == "auto" ? "3840x2400" : "1920x1200") : size,
                                 fps: fps, bitrate: bitrate, control: control, extend: extend, local: local,
-                                pin: localPin, audio: audio, virtualSize: virtualSize))
+                                pin: localPin, audio: audio, virtualSize: virtualSize, priority: priority))
     }
 
     private var header: some View {
@@ -1036,6 +1065,28 @@ struct ContentView: View {
     // เปิด/ปิด Log: ขยายหน้าต่างก่อนแล้วค่อยแสดงแผง / ซ่อนแผงก่อนแล้วค่อยหดหน้าต่าง
     // (ห้ามให้ความกว้างขั้นต่ำของเนื้อหาเกินหน้าต่าง หรือ resize แบบ animate ระหว่าง SwiftUI กำลัง layout —
     //  AppKit จะวน Update Constraints ไม่จบแล้ว crash: EXC_BREAKPOINT ใน updateConstraintsForSubtreeIfNeeded)
+    // สลับ Route/Mode แล้วเนื้อหาสูงขึ้นหรือเตี้ยลง -> ปรับความสูงหน้าต่างให้พอดี (ขอบบนอยู่ที่เดิม, ไม่เกินจอ)
+    // รอให้ SwiftUI วัดความสูงใหม่ก่อน และไม่ animate (resize ระหว่าง layout = Update Constraints วน -> crash)
+    private func fitHeight() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard contentHeight > 0, viewportHeight > 0,
+                  let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+            let dy = contentHeight - viewportHeight
+            NSLog("fitHeight content=%.0f viewport=%.0f window=%.0f", contentHeight, viewportHeight, window.frame.height)
+            guard abs(dy) > 2 else { return }
+            var f = window.frame
+            let maxH = window.screen?.visibleFrame.height ?? f.height
+            let minH = max(window.minSize.height,
+                           window.frameRect(forContentRect: NSRect(origin: .zero, size: window.contentMinSize)).height)
+            let newH = min(maxH, max(minH, f.height + dy))
+            f.origin.y += f.height - newH
+            f.size.height = newH
+            // ขยายแล้วขอบล่างหลุดจอ -> ดันหน้าต่างขึ้น
+            if let vis = window.screen?.visibleFrame, f.minY < vis.minY { f.origin.y = vis.minY }
+            window.setFrame(f, display: true)
+        }
+    }
+
     private func toggleLog(_ show: Bool) {
         guard show != showLog else { return }
         let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })

@@ -90,8 +90,9 @@ Don't post real input events while testing (pad/click messages move the user's r
   still @8M/60: max keyframe 260 KB → 120 KB vs bitrate/2, first-frame SSIM 0.902 → 0.895, equal by frame 30.
   `-g 2*fps` (fewer keyframes; a new viewer waits ≤ 2 s) and `-sc_threshold 0` (no extra IDR on window switches).
 - **mac-capture writes a frame as soon as SCK delivers one** (`onFrame` → out queue, `pending` flag so writes never
-  queue up) and a timer only repeats the last frame after ~1 frame interval of silence. pts still come from frame
-  count; small drift is fine because the viewer is out of the A/V lip-sync group (see below).
+  queue up) and a timer repeats the last frame while the screen is still. Writes are paced so the frame COUNT tracks
+  elapsed time × fps (event writes may run ≤ 1 frame ahead, the timer fills gaps) because ffmpeg derives pts from
+  the count — unpaced event+timer writes showed 71 fps at a 60 fps setting.
   Cost: veryfast 1920x1200@30 ≈ 17x realtime, superfast @60 ≈ 13x on Apple Silicon.
 - **Viewer must not leak RTCPeerConnections:** Chrome caps PCs per page (closed ones count until GC). The viewer
   retries WHEP when no publisher is live, so `closePc()` nulls handlers + `pc` and retries back off 2s → 15s.

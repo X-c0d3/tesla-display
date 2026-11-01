@@ -172,11 +172,16 @@ let capture = Capture(w: W, h: H)
 let out = FileHandle.standardOutput
 
 // จอเปลี่ยน -> เขียนเฟรมออกทันที (ไม่ต้องรอรอบ timer, ลด latency เฉลี่ยครึ่งเฟรม)
-// จอนิ่ง (ScreenCaptureKit ไม่ส่งเฟรม) -> timer เขียนเฟรมเดิมซ้ำให้ได้ประมาณ fps ไว้ให้ ffmpeg
-// (เวลาของภาพนับจากจำนวนเฟรม — คลาดเล็กน้อยได้ เพราะหน้าเว็บแยกภาพออกจาก lip sync กับเสียงแล้ว)
+// จอนิ่ง (ScreenCaptureKit ไม่ส่งเฟรม) -> timer เขียนเฟรมเดิมซ้ำ
+// จำนวนเฟรมต้องเท่ากับ "เวลาที่ผ่านไป x fps" เพราะ ffmpeg นับเวลาจากจำนวนเฟรม (-framerate)
+//   เขียนเกิน -> เวลาของภาพเดินเร็วกว่าจริง (เคยวัดได้ 71 fps ที่ตั้ง 60) / ขาด -> เดินช้ากว่าจริง
+//   จึงให้เขียนล่วงหน้าได้ไม่เกิน 1 เฟรม ถ้าเกินให้ timer เขียนเมื่อถึงรอบ
 let outQueue = DispatchQueue(label: "out", qos: .userInteractive)
-let frameInterval = 1.0 / Double(fps)
-var lastWrite = DispatchTime(uptimeNanoseconds: 0) // ใช้บน outQueue เท่านั้น
+let frameRate = Double(fps)
+let startTime = DispatchTime.now()
+var written = 0.0 // จำนวนเฟรมที่เขียนแล้ว (ใช้บน outQueue เท่านั้น)
+
+func framesDue() -> Double { Double(DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds) / 1e9 * frameRate }
 
 func writeLatest() {
     capture.lock.lock()
@@ -185,17 +190,21 @@ func writeLatest() {
     capture.lock.unlock()
     guard let data else { return }
     out.write(data)
-    lastWrite = .now()
+    written += 1
 }
 
-capture.onFrame = { outQueue.async { writeLatest() } }
-let ticker = DispatchSource.makeTimerSource(queue: outQueue)
-ticker.schedule(deadline: .now(), repeating: frameInterval / 4, leeway: .milliseconds(1))
-ticker.setEventHandler {
-    // เขียนซ้ำเฉพาะเมื่อไม่มีเฟรมออกไปเกือบ 1 รอบแล้ว
-    if Double(DispatchTime.now().uptimeNanoseconds - lastWrite.uptimeNanoseconds) / 1e9 >= frameInterval * 0.95 {
-        writeLatest()
+capture.onFrame = {
+    outQueue.async {
+        if written < framesDue() + 1 { writeLatest() } // ไม่งั้น pending ค้างไว้ให้ timer เขียนรอบถัดไป
     }
+}
+let ticker = DispatchSource.makeTimerSource(queue: outQueue)
+ticker.schedule(deadline: .now(), repeating: 1.0 / frameRate / 4, leeway: .milliseconds(1))
+ticker.setEventHandler {
+    let due = framesDue()
+    // ffmpeg อ่านไม่ทัน (เขียนค้าง) จนตามหลังเกินครึ่งวินาที -> ข้ามไป ไม่เขียนเฟรมซ้ำรัวๆ ให้คิวยาว
+    if due - written > frameRate / 2 { written = due.rounded(.down) }
+    if written < due { writeLatest() }
 }
 
 var activeStream: SCStream?
