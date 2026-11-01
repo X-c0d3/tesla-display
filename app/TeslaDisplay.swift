@@ -666,6 +666,7 @@ struct ContentView: View {
     @State private var display = 0
     @State private var showLog = false
     @State private var showToken = false
+    static let logWidth: CGFloat = 440
 
     private var statusColor: Color {
         guard c.running else { return .gray }
@@ -674,6 +675,9 @@ struct ContentView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
+        // คอลัมน์หลัก: การตั้งค่าเลื่อนได้ (ชิดบน) + แถบสถานะ/ปุ่มติดขอบล่างหน้าต่างเสมอ
+        VStack(spacing: 0) {
+        ScrollView(.vertical) {
         VStack(alignment: .leading, spacing: 14) {
             header
 
@@ -770,7 +774,14 @@ struct ContentView: View {
                                     .textFieldStyle(.roundedBorder)
                                     .font(.system(.title3, design: .monospaced).weight(.semibold))
                                     .frame(width: 140)
-                                    .onChange(of: localPin) { localPin = String(localPin.filter { $0.isLetter || $0.isNumber }.prefix(16)) }
+                                    .onChange(of: localPin) {
+                                        // รับเฉพาะ A-Z a-z 0-9 ไม่เกิน 16 ตัว — เขียนกลับเฉพาะเมื่อต้องตัดจริง
+                                        // (เขียนค่าซ้ำทุกครั้งที่พิมพ์ทำให้ layout ของ AppKit วนจน crash ได้)
+                                        let clean = String(localPin.unicodeScalars
+                                            .filter { $0.isASCII && CharacterSet.alphanumerics.contains($0) }
+                                            .map(Character.init).prefix(16))
+                                        if clean != localPin { localPin = clean }
+                                    }
                                 Button { copy(localPin) } label: { copyIcon(localPin) }
                                     .buttonStyle(.borderless).help("Copy PIN")
                                 Button { localPin = randomPin() } label: { Image(systemName: "dice") }
@@ -814,7 +825,15 @@ struct ContentView: View {
             .disabled(c.running)
 
             if local { teslaURLs }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 2)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .scrollIndicators(.automatic)
 
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 PulseDot(color: statusColor, active: c.running)
                 Text(c.status).font(.callout.weight(.medium)).foregroundStyle(.white.opacity(0.8)).lineLimit(2)
@@ -847,16 +866,30 @@ struct ContentView: View {
                 Toggle(isOn: $showStats) { Image(systemName: "chart.bar.xaxis") }
                     .toggleStyle(.button)
                     .help(showStats ? "Hide live FPS / bitrate" : "Show live FPS / bitrate")
-                Toggle(isOn: $showLog.animation(.spring(response: 0.35, dampingFraction: 0.85))) {
+                Toggle(isOn: Binding(get: { showLog }, set: { toggleLog($0) })) {
                     Label("Log", systemImage: showLog ? "sidebar.right" : "text.alignleft")
                 }.toggleStyle(.button)
                 Button("Quit") { c.stop(); NSApp.terminate(nil) }
             }
+
+            // เลขเวอร์ชัน (จาก Info.plist: VERSION ตอน build / branch release/<version>) + ผู้พัฒนา (ลิงก์ไป GitHub)
+            HStack(spacing: 4) {
+                Spacer()
+                Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") · by")
+                    .monospacedDigit()
+                Link("X-c0d3", destination: URL(string: "https://github.com/X-c0d3/tesla-display")!)
+                    .help("github.com/X-c0d3/tesla-display")
+            }
+            .font(.caption2)
+            .foregroundStyle(.white.opacity(0.35))
+            .tint(.white.opacity(0.55))
+            .padding(.top, -6)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 2)
+        .padding(.top, 4)
         .padding(.bottom, 18)
-        .frame(width: 460)
+        }
+        .frame(minWidth: 460, idealWidth: 460, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
 
             if showLog {
                 logPanel
@@ -982,7 +1015,7 @@ struct ContentView: View {
         .padding(.top, 34)
         .padding(.trailing, 18)
         .padding(.bottom, 18)
-        .frame(width: 440)
+        .frame(width: Self.logWidth)
         .frame(maxHeight: .infinity)
     }
 
@@ -995,6 +1028,31 @@ struct ContentView: View {
     }
 
     private func randomPin() -> String { String(format: "%06d", Int.random(in: 0...999_999)) }
+
+    // เปิด/ปิดแผง Log: ขยาย/หดหน้าต่างไปทางขวา (ความสูงเดิม) เพื่อไม่ให้คอลัมน์หลักถูกบีบ
+    // เปิด/ปิด Log: ขยายหน้าต่างก่อนแล้วค่อยแสดงแผง / ซ่อนแผงก่อนแล้วค่อยหดหน้าต่าง
+    // (ห้ามให้ความกว้างขั้นต่ำของเนื้อหาเกินหน้าต่าง หรือ resize แบบ animate ระหว่าง SwiftUI กำลัง layout —
+    //  AppKit จะวน Update Constraints ไม่จบแล้ว crash: EXC_BREAKPOINT ใน updateConstraintsForSubtreeIfNeeded)
+    private func toggleLog(_ show: Bool) {
+        guard show != showLog else { return }
+        let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })
+        if show {
+            if let window {
+                var f = window.frame
+                f.size.width += Self.logWidth
+                window.setFrame(f, display: true)
+            }
+            DispatchQueue.main.async { showLog = true }
+        } else {
+            showLog = false
+            DispatchQueue.main.async {
+                guard let window else { return }
+                var f = window.frame
+                f.size.width = max(460, f.width - Self.logWidth)
+                window.setFrame(f, display: true)
+            }
+        }
+    }
 
     // URL ที่ต้องพิมพ์บน Tesla ในโหมด local (IP ของ Mac ในแต่ละวง)
     private var teslaURLs: some View {
@@ -1065,7 +1123,8 @@ struct TeslaDisplayApp: App {
             ContentView().environmentObject(controller)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)  // ลากปรับขนาดได้ (ขั้นต่ำ = ขนาดเล็กสุดของเนื้อหา)
+        .defaultSize(width: 460, height: 880)
         .defaultLaunchBehavior(.presented) // เปิดหน้าต่างทุกครั้ง แม้ครั้งก่อนจะปิดแอปตอนไม่มีหน้าต่าง
         .restorationBehavior(.disabled)
     }
